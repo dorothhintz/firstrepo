@@ -14,29 +14,22 @@ jobs:
       - name: Checkout helper repository
         uses: actions/checkout@v4
 
-      - name: Checkout pinned Besu snapshot
-        uses: actions/checkout@v4
-        with:
-          repository: besu-eth/besu
-          ref: 3fd233a4f93556e932f734d8feecbad4a047ff67
-          path: besu
-          fetch-depth: 1
-
-      - name: Archive tracked Besu files
+      - name: Download published Besu EVM artifact
         shell: bash
         run: |
           set -euo pipefail
-          cd besu
-          git archive --format=tar.gz --output="$GITHUB_WORKSPACE/besu-3fd233a4.tar.gz" HEAD
-          cd "$GITHUB_WORKSPACE"
-          sha256sum besu-3fd233a4.tar.gz > BESU_SOURCE_SHA256SUMS
+          curl --fail --location --retry 3 \
+            --output besu-evm-26.6.1-3fd233a.jar \
+            'https://artifacts.consensys.net/public/linea-besu/maven/org/hyperledger/besu/besu-evm/26.6.1-3fd233a/besu-evm-26.6.1-3fd233a.jar'
+          jar tf besu-evm-26.6.1-3fd233a.jar | grep 'Keccak256Operation.class'
+          sha256sum besu-evm-26.6.1-3fd233a.jar > BESU_EVM_SHA256SUMS
 
-      - name: Upload Besu source
+      - name: Upload Besu EVM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: besu-3fd233a4
+          name: besu-evm-26.6.1-3fd233a
           path: |
-            besu-3fd233a4.tar.gz
-            BESU_SOURCE_SHA256SUMS
+            besu-evm-26.6.1-3fd233a.jar
+            BESU_EVM_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
