@@ -3,8 +3,8 @@ import shutil
 
 path = Path("prover/zkevm/prover/hash/keccak/glue/keccak_single_provider.go")
 text = path.read_text()
-old = '''\tproviderBytes := m.Inputs.Provider.Data.ScanStreams(run)\n\tm.KeccakOverBlocks.Inputs.Provider = providerBytes\n'''
-new = '''\tproviderBytes := m.Inputs.Provider.Data.ScanStreams(run)\n\tapplyNonPrefixPoCHook(run, m, &providerBytes)\n\tm.KeccakOverBlocks.Inputs.Provider = providerBytes\n'''
+old = '''\t// assign ImportAndPad module\n\tm.ImportPad.Run(run)\n\t// assign packing module\n\tm.Packing.Run(run)\n\t// assign keccak over blocks module\n\tproviderBytes := m.Inputs.Provider.Data.ScanStreams(run)\n\tm.KeccakOverBlocks.Inputs.Provider = providerBytes\n'''
+new = '''\t// assign ImportAndPad module\n\tm.ImportPad.Run(run)\n\t// obtain the authenticated provider streams before packing assignment\n\tproviderBytes := m.Inputs.Provider.Data.ScanStreams(run)\n\t// In normal builds the hook is a no-op and honest packing is assigned.\n\t// Under the PoC tag the hook assigns the malicious, constraint-valid packing witness.\n\tif !applyNonPrefixPoCHook(run, m, &providerBytes) {\n\t\tm.Packing.Run(run)\n\t}\n\t// assign keccak over blocks module\n\tm.KeccakOverBlocks.Inputs.Provider = providerBytes\n'''
 if old not in text:
     raise SystemExit("KeccakSingleProvider.Run patch point missing")
 path.write_text(text.replace(old, new))
