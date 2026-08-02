@@ -59,9 +59,10 @@ jobs:
       - name: Install trace harness
         run: |
           set -euxo pipefail
+          mkdir -p linea/tracer/arithmetization/src/test/java/net/consensys/linea/testing
+          mkdir -p out/control out/attack
           cp harness/linea-poc/gate3_hash_authorization_vault_trace_test.java \
             linea/tracer/arithmetization/src/test/java/net/consensys/linea/testing/HashAuthorizationVaultTraceTest.java
-          mkdir -p out/control out/attack
           git -C linea status --short
 
       - name: Run identical-state control
@@ -91,6 +92,7 @@ jobs:
         if: always()
         run: |
           set -euxo pipefail
+          mkdir -p out/control out/attack
           grep -E '^(mode|sourceKeccakInput|substitutedKeccakPreimage|reportedKeccakResult|substitutionHits|attacker|vault|deployRlp|withdrawRlp|initialStateRoot|finalStateRoot|initialAttackerBalance|finalAttackerBalance|finalVaultBalance|transactionSuccess|tracePath|traceSha256)=' \
             out/control/control.log > out/control/observations.txt || true
           grep -E '^(mode|sourceKeccakInput|substitutedKeccakPreimage|reportedKeccakResult|substitutionHits|attacker|vault|deployRlp|withdrawRlp|initialStateRoot|finalStateRoot|initialAttackerBalance|finalAttackerBalance|finalVaultBalance|transactionSuccess|tracePath|traceSha256)=' \
