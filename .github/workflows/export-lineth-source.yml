@@ -41,17 +41,18 @@ jobs:
         run: |
           set -euo pipefail
           (cd lineth-main/prover && go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0)
+          (cd lineth-main/prover && go test ./zkevm/prover/hash/keccak/glue -run '^$' -count=0)
           (cd lineth-pr3474/prover && go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0)
           GOPATH_PATH="$(go env GOPATH)"
-          tar -czf lineth-prover-combined-go-mod-cache.tar.gz -C "$GOPATH_PATH" pkg/mod
-          sha256sum lineth-prover-combined-go-mod-cache.tar.gz > MOD_CACHE_SHA256SUMS
+          tar -czf lineth-prover-full-go-mod-cache.tar.gz -C "$GOPATH_PATH" pkg/mod
+          sha256sum lineth-prover-full-go-mod-cache.tar.gz > MOD_CACHE_SHA256SUMS
 
-      - name: Upload combined Go module cache
+      - name: Upload full Go module cache
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-prover-combined-go-mod-cache
+          name: lineth-prover-full-go-mod-cache
           path: |
-            lineth-prover-combined-go-mod-cache.tar.gz
+            lineth-prover-full-go-mod-cache.tar.gz
             MOD_CACHE_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
