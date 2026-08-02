@@ -10,7 +10,7 @@ import (
 	"github.com/consensys/linea-monorepo/prover/zkevm/prover/hash/packing"
 )
 
-func applyNonPrefixPoCHook(run *wizard.ProverRuntime, m *KeccakSingleProvider, providerBytes *[][]byte) {
+func applyNonPrefixPoCHook(run *wizard.ProverRuntime, m *KeccakSingleProvider, providerBytes *[][]byte) bool {
 	targetRow, laneStart, err := packing.AssignNonPrefixPoCWitness(run, m.Packing)
 	if err != nil {
 		utils.Panic("non-prefix PoC assignment failed: %v", err)
@@ -29,4 +29,5 @@ func applyNonPrefixPoCHook(run *wizard.ProverRuntime, m *KeccakSingleProvider, p
 	if !bytes.Equal(got, packing.NonPrefixTarget) {
 		utils.Panic("target row %d lane %d repacked %x, want %x", targetRow, laneStart, got, packing.NonPrefixTarget)
 	}
+	return true
 }
