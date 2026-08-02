@@ -10,7 +10,7 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
       - name: Checkout helper repository
         uses: actions/checkout@v4
@@ -54,9 +54,6 @@ jobs:
             tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation/Keccak256Operation.java
           cp "$GITHUB_WORKSPACE/poc/HashAuthorizationVaultBesuTest.java" \
             tracer/arithmetization/src/test/java/net/consensys/linea/testing/HashAuthorizationVaultBesuTest.java
-          grep -R "NONPREFIX_.*SUBSTITUTION" \
-            tracer/arithmetization/src/main/java/net/consensys/linea/zktracer/module/hub/fragment/StackFragment.java \
-            tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation/Keccak256Operation.java
 
       - name: Generate AIR-valid malicious request
         shell: bash
@@ -81,14 +78,114 @@ jobs:
           grep -q 'NONPREFIX_HUB_SUBSTITUTION' "$TEST_XML"
           grep -q 'failures="0"' "$TEST_XML"
 
-      - name: Upload malicious execution package
+      - name: Install production Go witness PoC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd lineth-main
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_full_poc.go" prover/zkevm/prover/hash/packing/nonprefix_full_poc.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_hook.go" prover/zkevm/prover/hash/keccak/glue/nonprefix_hook.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_hook_default.go" prover/zkevm/prover/hash/keccak/glue/nonprefix_hook_default.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_poc_test.go" prover/zkevm/prover/hash/keccak/glue/nonprefix_poc_test.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_full_test.go" prover/backend/execution/nonprefix_full_test.go
+          python3 "$GITHUB_WORKSPACE/poc/apply_go_patches.py"
+          cd prover
+          gofmt -w \
+            zkevm/prover/hash/packing/nonprefix_full_poc.go \
+            zkevm/prover/hash/keccak/glue/nonprefix_hook.go \
+            zkevm/prover/hash/keccak/glue/nonprefix_hook_default.go \
+            zkevm/prover/hash/keccak/glue/nonprefix_poc_test.go \
+            zkevm/prover/hash/keccak/glue/keccak_single_provider.go \
+            backend/execution/nonprefix_full_test.go
+
+      - name: Verify isolated production Packing and Keccak proof
+        shell: bash
+        env:
+          EXPECT_MALICIOUS_PASS: '1'
+          GOMAXPROCS: '4'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc \
+            ./zkevm/prover/hash/keccak/glue \
+            -run '^TestKeccakAcceptsNonPrefixPackingSubstitution$' \
+            -count=1 -timeout=60m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-isolated-proof.log"
+          grep -q 'full packing/Keccak proof verification error: <nil>' "$GITHUB_WORKSPACE/gate-isolated-proof.log"
+
+      - name: Validate backend request and witness
+        shell: bash
+        env:
+          NONPREFIX_POC_DIR: ${{ github.workspace }}/poc-output
+          GOMAXPROCS: '4'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc ./backend/execution \
+            -run '^TestNonPrefixRequestParse$' \
+            -count=1 -timeout=60m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-backend-witness.log"
+          grep -q 'NONPREFIX_FINAL_ROOT=' "$GITHUB_WORKSPACE/gate-backend-witness.log"
+          grep -q 'NONPREFIX_PUBLIC_INPUT=' "$GITHUB_WORKSPACE/gate-backend-witness.log"
+
+      - name: Add temporary proof swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          free -h
+          df -h /
+          AVAILABLE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
+          SWAP_GB=20
+          if [ "$AVAILABLE_KB" -lt 26000000 ]; then SWAP_GB=12; fi
+          sudo fallocate -l "${SWAP_GB}G" /swapfile-nonprefix
+          sudo chmod 600 /swapfile-nonprefix
+          sudo mkswap /swapfile-nonprefix
+          sudo swapon /swapfile-nonprefix
+          swapon --show
+          free -h
+
+      - name: Prove and verify production check-only execution proof
+        shell: bash
+        env:
+          NONPREFIX_POC_DIR: ${{ github.workspace }}/poc-output
+          GOMAXPROCS: '4'
+          GOMEMLIMIT: 6GiB
+          GOGC: '20'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc ./backend/execution \
+            -run '^TestNonPrefixFullZkEVMCheckOnly$' \
+            -count=1 -timeout=180m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-checkonly-proof.log"
+          grep -q 'NONPREFIX_CHECKONLY_VERIFY=PASS' "$GITHUB_WORKSPACE/gate-checkonly-proof.log"
+          grep -q 'Public input consistency check passed' "$GITHUB_WORKSPACE/gate-checkonly-proof.log"
+
+      - name: Prove and verify production recursive execution proof
+        shell: bash
+        env:
+          NONPREFIX_POC_DIR: ${{ github.workspace }}/poc-output
+          GOMAXPROCS: '4'
+          GOMEMLIMIT: 6GiB
+          GOGC: '20'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc ./backend/execution \
+            -run '^TestNonPrefixFullZkEVMRecursion$' \
+            -count=1 -timeout=300m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-recursion-proof.log"
+          grep -q 'NONPREFIX_RECURSION_VERIFY=PASS' "$GITHUB_WORKSPACE/gate-recursion-proof.log"
+          grep -q 'Public input consistency check passed' "$GITHUB_WORKSPACE/gate-recursion-proof.log"
+
+      - name: Upload proof evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nonprefix-malicious-execution-package
+          name: nonprefix-full-proof-evidence
           path: |
             poc-output/**
             gate-full-trace.log
+            gate-isolated-proof.log
+            gate-backend-witness.log
+            gate-checkonly-proof.log
+            gate-recursion-proof.log
             lineth-main/tracer/arithmetization/build/test-results/test/**
             lineth-main/tracer/arithmetization/build/reports/tests/test/**
           retention-days: 1
