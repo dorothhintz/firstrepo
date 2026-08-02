@@ -47,6 +47,27 @@ jobs:
           path: lineth-main
           fetch-depth: 1
 
+      - name: Populate exact Go module cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0
+          cd "$GITHUB_WORKSPACE"
+          GOPATH_PATH="$(go env GOPATH)"
+          tar -czf lineth-prover-go-mod-cache.tar.gz -C "$GOPATH_PATH" pkg/mod
+          sha256sum lineth-prover-go-mod-cache.tar.gz > MOD_CACHE_SHA256SUMS
+
+      - name: Upload Go module cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-prover-go-mod-cache
+          path: |
+            lineth-prover-go-mod-cache.tar.gz
+            MOD_CACHE_SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Checkout PR 3474 head snapshot
         uses: actions/checkout@v4
         with:
