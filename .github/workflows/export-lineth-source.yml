@@ -20,25 +20,6 @@ jobs:
           go-version: '1.25.7'
           check-latest: true
 
-      - name: Archive Go toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          GOROOT_PATH="$(go env GOROOT)"
-          go version
-          tar -czf go1.25.7-linux-amd64.tar.gz -C "$GOROOT_PATH" .
-          sha256sum go1.25.7-linux-amd64.tar.gz > GO_SHA256SUMS
-
-      - name: Upload Go toolchain
-        uses: actions/upload-artifact@v4
-        with:
-          name: go1.25.7-linux-amd64
-          path: |
-            go1.25.7-linux-amd64.tar.gz
-            GO_SHA256SUMS
-          retention-days: 1
-          if-no-files-found: error
-
       - name: Checkout Lineth main snapshot
         uses: actions/checkout@v4
         with:
@@ -46,27 +27,6 @@ jobs:
           ref: b660c569ef2f6756b14d548382777a41b4df382c
           path: lineth-main
           fetch-depth: 1
-
-      - name: Populate exact Go module cache
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd lineth-main/prover
-          go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0
-          cd "$GITHUB_WORKSPACE"
-          GOPATH_PATH="$(go env GOPATH)"
-          tar -czf lineth-prover-go-mod-cache.tar.gz -C "$GOPATH_PATH" pkg/mod
-          sha256sum lineth-prover-go-mod-cache.tar.gz > MOD_CACHE_SHA256SUMS
-
-      - name: Upload Go module cache
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-prover-go-mod-cache
-          path: |
-            lineth-prover-go-mod-cache.tar.gz
-            MOD_CACHE_SHA256SUMS
-          retention-days: 1
-          if-no-files-found: error
 
       - name: Checkout PR 3474 head snapshot
         uses: actions/checkout@v4
@@ -76,21 +36,22 @@ jobs:
           path: lineth-pr3474
           fetch-depth: 1
 
-      - name: Create source archives
+      - name: Populate combined Go module cache
         shell: bash
         run: |
           set -euo pipefail
-          tar -czf lineth-prover-main-b660c569.tar.gz -C lineth-main prover
-          tar -czf lineth-prover-pr3474-b67f3641.tar.gz -C lineth-pr3474 prover
-          sha256sum lineth-prover-*.tar.gz | tee SHA256SUMS
+          (cd lineth-main/prover && go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0)
+          (cd lineth-pr3474/prover && go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0)
+          GOPATH_PATH="$(go env GOPATH)"
+          tar -czf lineth-prover-combined-go-mod-cache.tar.gz -C "$GOPATH_PATH" pkg/mod
+          sha256sum lineth-prover-combined-go-mod-cache.tar.gz > MOD_CACHE_SHA256SUMS
 
-      - name: Upload source archives
+      - name: Upload combined Go module cache
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-prover-source-snapshots
+          name: lineth-prover-combined-go-mod-cache
           path: |
-            lineth-prover-main-b660c569.tar.gz
-            lineth-prover-pr3474-b67f3641.tar.gz
-            SHA256SUMS
+            lineth-prover-combined-go-mod-cache.tar.gz
+            MOD_CACHE_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
