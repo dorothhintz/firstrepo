@@ -34,68 +34,55 @@ jobs:
           path: lineth-main
           fetch-depth: 1
 
-      - name: Populate and split tracer offline build
+      - name: Build exact go-corset CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOBIN="$GITHUB_WORKSPACE/tools" go install github.com/consensys/go-corset/cmd/go-corset@v1.2.10
+          "$GITHUB_WORKSPACE/tools/go-corset" --version || true
+          sha256sum "$GITHUB_WORKSPACE/tools/go-corset" > GO_CORSET_SHA256SUMS
+
+      - name: Resolve tracer testing runtime
         shell: bash
         env:
           GRADLE_USER_HOME: ${{ github.workspace }}/gradle-home
         run: |
           set -euo pipefail
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/tools:$(go env GOPATH)/bin:$PATH"
+          cat > export-runtime.init.gradle <<'GRADLE'
+          gradle.afterProject { p, state ->
+            if (p.path == ':tracer:testing') {
+              p.tasks.register('exportResolvedTestRuntime') {
+                doLast {
+                  def outDir = new File(rootProject.projectDir, '../runtime-jars')
+                  outDir.mkdirs()
+                  p.configurations.testRuntimeClasspath.resolve().each { f ->
+                    def digest = java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString().substring(0, 16)
+                    new File(outDir, digest + '-' + f.name).bytes = f.bytes
+                  }
+                  println "exported runtime files=" + outDir.listFiles().size()
+                }
+              }
+            }
+          }
+          GRADLE
           cd lineth-main
-          ./gradlew :tracer:arithmetization:testClasses --no-daemon --stacktrace
+          ./gradlew :tracer:testing:exportResolvedTestRuntime \
+            --init-script "$GITHUB_WORKSPACE/export-runtime.init.gradle" \
+            --no-daemon --stacktrace
           cd "$GITHUB_WORKSPACE"
-          tar -czf lineth-tracer-gradle-home.tar.gz gradle-home
-          sha256sum lineth-tracer-gradle-home.tar.gz > GRADLE_HOME_SHA256SUMS
-          split -b 240m -d -a 2 lineth-tracer-gradle-home.tar.gz gradle-home.part.
-          for i in 00 01 02 03; do test -f "gradle-home.part.$i" || touch "gradle-home.part.$i"; done
-          tar -czf lineth-tracer-build-outputs.tar.gz \
-            -C lineth-main \
-            buildSrc/build \
-            tracer/testing/build \
-            tracer/arithmetization/build \
-            tracer-constraints/zkevm_osaka.bin
-          sha256sum lineth-tracer-build-outputs.tar.gz > BUILD_OUTPUTS_SHA256SUMS
-          ls -lh gradle-home.part.* lineth-tracer-build-outputs.tar.gz
+          tar -czf lineth-tracer-test-runtime.tar.gz runtime-jars
+          sha256sum lineth-tracer-test-runtime.tar.gz > TRACER_RUNTIME_SHA256SUMS
+          ls -lh lineth-tracer-test-runtime.tar.gz tools/go-corset
 
-      - name: Upload cache part 00
+      - name: Upload exact tools
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-gradle-cache-part-00
-          path: gradle-home.part.00
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload cache part 01
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-gradle-cache-part-01
-          path: gradle-home.part.01
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload cache part 02
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-gradle-cache-part-02
-          path: gradle-home.part.02
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload cache part 03
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-gradle-cache-part-03
-          path: gradle-home.part.03
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload build outputs and checksums
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-tracer-build-outputs
+          name: lineth-corset-and-test-runtime
           path: |
-            lineth-tracer-build-outputs.tar.gz
-            GRADLE_HOME_SHA256SUMS
-            BUILD_OUTPUTS_SHA256SUMS
+            tools/go-corset
+            GO_CORSET_SHA256SUMS
+            lineth-tracer-test-runtime.tar.gz
+            TRACER_RUNTIME_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
