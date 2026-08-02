@@ -1,0 +1,50 @@
+name: export-lineth-source
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout helper repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Lineth main snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: LFDT-Lineth/lineth-monorepo
+          ref: b660c569ef2f6756b14d548382777a41b4df382c
+          path: lineth-main
+          fetch-depth: 1
+
+      - name: Checkout PR 3474 head snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: LFDT-Lineth/lineth-monorepo
+          ref: b67f364112556069b97f5553df52471a470f4a61
+          path: lineth-pr3474
+          fetch-depth: 1
+
+      - name: Create source archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf lineth-prover-main-b660c569.tar.gz -C lineth-main prover
+          tar -czf lineth-prover-pr3474-b67f3641.tar.gz -C lineth-pr3474 prover
+          sha256sum lineth-prover-*.tar.gz | tee SHA256SUMS
+
+      - name: Upload source archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-prover-source-snapshots
+          path: |
+            lineth-prover-main-b660c569.tar.gz
+            lineth-prover-pr3474-b67f3641.tar.gz
+            SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
