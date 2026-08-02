@@ -58,11 +58,15 @@ jobs:
                 doLast {
                   def outDir = new File(rootProject.projectDir, '../runtime-jars')
                   outDir.mkdirs()
+                  def orderedNames = []
                   p.configurations.testRuntimeClasspath.resolve().findAll { it.isFile() }.each { f ->
                     def digest = java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString().substring(0, 16)
-                    new File(outDir, digest + '-' + f.name).bytes = f.bytes
+                    def dst = new File(outDir, digest + '-' + f.name)
+                    dst.bytes = f.bytes
+                    orderedNames.add(dst.name)
                   }
-                  println "exported runtime files=" + outDir.listFiles().size()
+                  new File(outDir, 'runtime-classpath.txt').text = orderedNames.join(System.lineSeparator()) + System.lineSeparator()
+                  println "exported runtime files=" + orderedNames.size()
                 }
               }
             }
