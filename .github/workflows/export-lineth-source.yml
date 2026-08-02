@@ -63,8 +63,6 @@ jobs:
         env:
           ZKEVM_FORK: OSAKA
           PRESERVE_TRACE_FILES: '1'
-          besu.traces.dir: ${{ github.workspace }}/poc-output
-          besu.plugins.dir: ${{ github.workspace }}/poc-plugins
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/tools:$(go env GOPATH)/bin:$PATH"
@@ -72,12 +70,16 @@ jobs:
           cd lineth-main
           ./gradlew :tracer:arithmetization:test \
             --tests net.consensys.linea.testing.HashAuthorizationVaultBesuTest \
+            -Dbesu.traces.dir="$GITHUB_WORKSPACE/poc-output" \
+            -Dbesu.plugins.dir="$GITHUB_WORKSPACE/poc-plugins" \
             --no-daemon --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gate-full-trace.log"
-          find "$GITHUB_WORKSPACE/poc-output" -type f -maxdepth 4 -print -exec sha256sum {} \;
+          find "$GITHUB_WORKSPACE/poc-output" -maxdepth 5 -type f -print -exec sha256sum {} \;
           test "$(find "$GITHUB_WORKSPACE/poc-output" -name '*.lt.gz' | wc -l)" -ge 1
           test "$(find "$GITHUB_WORKSPACE/poc-output" -name '*getZkProof.json' | wc -l)" -ge 1
-          grep -q 'NONPREFIX_EVM_SUBSTITUTION' "$GITHUB_WORKSPACE/gate-full-trace.log"
-          grep -q 'NONPREFIX_HUB_SUBSTITUTION' "$GITHUB_WORKSPACE/gate-full-trace.log"
+          TEST_XML=tracer/arithmetization/build/test-results/test/TEST-net.consensys.linea.testing.HashAuthorizationVaultBesuTest.xml
+          grep -q 'NONPREFIX_EVM_SUBSTITUTION' "$TEST_XML"
+          grep -q 'NONPREFIX_HUB_SUBSTITUTION' "$TEST_XML"
+          grep -q 'failures="0"' "$TEST_XML"
 
       - name: Upload malicious execution package
         if: always()
