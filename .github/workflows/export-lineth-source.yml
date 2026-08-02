@@ -34,69 +34,35 @@ jobs:
           path: lineth-main
           fetch-depth: 1
 
-      - name: Build exact go-corset CLI
+      - name: Build exact Linea tracer plugins
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/tools"
           GOBIN="$GITHUB_WORKSPACE/tools" go install github.com/consensys/go-corset/cmd/go-corset@v1.2.10
-          "$GITHUB_WORKSPACE/tools/go-corset" --version
-          sha256sum "$GITHUB_WORKSPACE/tools/go-corset" > GO_CORSET_SHA256SUMS
+          export PATH="$GITHUB_WORKSPACE/tools:$(go env GOPATH)/bin:$PATH"
+          cd lineth-main
+          ./gradlew :tracer:plugins:distZip --no-daemon --stacktrace
+          cp tracer/plugins/build/distributions/*.zip "$GITHUB_WORKSPACE/linea-tracer-plugins.zip"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum linea-tracer-plugins.zip > LINEA_PLUGIN_SHA256SUMS
 
-      - name: Build and export tracer testing runtime
+      - name: Download exact Shomei Besu plugins
         shell: bash
-        env:
-          GRADLE_USER_HOME: ${{ github.workspace }}/gradle-home
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/tools:$(go env GOPATH)/bin:$PATH"
-          cat > export-runtime.init.gradle <<'GRADLE'
-          gradle.afterProject { p, state ->
-            if (p.path == ':tracer:testing') {
-              p.tasks.register('exportResolvedTestRuntime') {
-                dependsOn p.tasks.named('testClasses')
-                doLast {
-                  def outDir = new File(rootProject.projectDir, '../runtime-jars')
-                  outDir.mkdirs()
-                  def orderedNames = []
-                  p.configurations.testRuntimeClasspath.resolve().findAll { it.isFile() }.each { f ->
-                    def digest = java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString().substring(0, 16)
-                    def dst = new File(outDir, digest + '-' + f.name)
-                    dst.bytes = f.bytes
-                    orderedNames.add(dst.name)
-                  }
-                  new File(outDir, 'runtime-classpath.txt').text = orderedNames.join(System.lineSeparator()) + System.lineSeparator()
-                  println "exported runtime files=" + orderedNames.size()
-                }
-              }
-            }
-          }
-          GRADLE
-          cd lineth-main
-          ./gradlew :tracer:testing:exportResolvedTestRuntime \
-            --init-script "$GITHUB_WORKSPACE/export-runtime.init.gradle" \
-            --no-daemon --stacktrace
-          cd "$GITHUB_WORKSPACE"
-          tar -czf lineth-tracer-test-runtime.tar.gz runtime-jars
-          sha256sum lineth-tracer-test-runtime.tar.gz > TRACER_RUNTIME_SHA256SUMS
-          ls -lh lineth-tracer-test-runtime.tar.gz tools/go-corset
+          curl --fail --location --retry 3 \
+            --output besu-shomei-plugin-v1.0.7.zip \
+            'https://github.com/Consensys/besu-shomei-plugin/releases/download/v1.0.7/besu-shomei-plugin-v1.0.7.zip'
+          sha256sum besu-shomei-plugin-v1.0.7.zip > SHOMEI_PLUGIN_SHA256SUMS
 
-      - name: Upload go-corset
+      - name: Upload exact plugin bundles
         uses: actions/upload-artifact@v4
         with:
-          name: go-corset-v1.2.10-linux-amd64
+          name: lineth-besu-plugin-bundles
           path: |
-            tools/go-corset
-            GO_CORSET_SHA256SUMS
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload tracer test runtime
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-tracer-test-runtime
-          path: |
-            lineth-tracer-test-runtime.tar.gz
-            TRACER_RUNTIME_SHA256SUMS
+            linea-tracer-plugins.zip
+            besu-shomei-plugin-v1.0.7.zip
+            LINEA_PLUGIN_SHA256SUMS
+            SHOMEI_PLUGIN_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
