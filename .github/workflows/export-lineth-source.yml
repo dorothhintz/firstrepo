@@ -14,13 +14,7 @@ jobs:
       - name: Checkout helper repository
         uses: actions/checkout@v4
 
-      - name: Set up Go 1.25.7
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.25.7'
-          check-latest: true
-
-      - name: Checkout Lineth main snapshot
+      - name: Checkout exact Lineth snapshot
         uses: actions/checkout@v4
         with:
           repository: LFDT-Lineth/lineth-monorepo
@@ -28,31 +22,21 @@ jobs:
           path: lineth-main
           fetch-depth: 1
 
-      - name: Checkout PR 3474 head snapshot
-        uses: actions/checkout@v4
-        with:
-          repository: LFDT-Lineth/lineth-monorepo
-          ref: b67f364112556069b97f5553df52471a470f4a61
-          path: lineth-pr3474
-          fetch-depth: 1
-
-      - name: Populate combined Go module cache
+      - name: Archive tracked monorepo files
         shell: bash
         run: |
           set -euo pipefail
-          (cd lineth-main/prover && go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0)
-          (cd lineth-main/prover && go test ./zkevm/prover/hash/keccak/glue -run '^$' -count=0)
-          (cd lineth-pr3474/prover && go test ./zkevm/prover/hash/packing/dedicated -run '^$' -count=0)
-          GOPATH_PATH="$(go env GOPATH)"
-          tar -czf lineth-prover-full-go-mod-cache.tar.gz -C "$GOPATH_PATH" pkg/mod
-          sha256sum lineth-prover-full-go-mod-cache.tar.gz > MOD_CACHE_SHA256SUMS
+          cd lineth-main
+          git archive --format=tar.gz --output="$GITHUB_WORKSPACE/lineth-full-b660c569.tar.gz" HEAD
+          cd "$GITHUB_WORKSPACE"
+          sha256sum lineth-full-b660c569.tar.gz > FULL_SOURCE_SHA256SUMS
 
-      - name: Upload full Go module cache
+      - name: Upload full source
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-prover-full-go-mod-cache
+          name: lineth-full-b660c569
           path: |
-            lineth-prover-full-go-mod-cache.tar.gz
-            MOD_CACHE_SHA256SUMS
+            lineth-full-b660c569.tar.gz
+            FULL_SOURCE_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
