@@ -14,6 +14,31 @@ jobs:
       - name: Checkout helper repository
         uses: actions/checkout@v4
 
+      - name: Set up Go 1.25.7
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.7'
+          check-latest: true
+
+      - name: Archive Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOROOT_PATH="$(go env GOROOT)"
+          go version
+          tar -czf go1.25.7-linux-amd64.tar.gz -C "$GOROOT_PATH" .
+          sha256sum go1.25.7-linux-amd64.tar.gz > GO_SHA256SUMS
+
+      - name: Upload Go toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: go1.25.7-linux-amd64
+          path: |
+            go1.25.7-linux-amd64.tar.gz
+            GO_SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Checkout Lineth main snapshot
         uses: actions/checkout@v4
         with:
