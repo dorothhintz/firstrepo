@@ -13,23 +13,151 @@ jobs:
     steps:
       - name: Checkout helper repository
         uses: actions/checkout@v4
-
-      - name: Download exact Shomei Besu plugins
+      - name: Set up Go 1.25.7
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.7'
+          check-latest: true
+      - name: Checkout exact Lineth snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: LFDT-Lineth/lineth-monorepo
+          ref: b660c569ef2f6756b14d548382777a41b4df382c
+          path: lineth-main
+          fetch-depth: 1
+      - name: Populate backend execution Go caches
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 \
-            --output besu-shomei-plugin-v1.0.7.zip \
-            'https://github.com/Consensys/besu-shomei-plugin/releases/download/v1.0.7/besu-shomei-plugin-v1.0.7.zip'
-          sha256sum besu-shomei-plugin-v1.0.7.zip > SHOMEI_PLUGIN_SHA256SUMS
-          unzip -l besu-shomei-plugin-v1.0.7.zip | head -100
-
-      - name: Upload exact Shomei plugin bundle
+          cd lineth-main/prover
+          go test ./backend/execution -run '^$' -count=0
+          cd "$GITHUB_WORKSPACE"
+          GOMODCACHE_PATH="$(go env GOMODCACHE)"
+          GOCACHE_PATH="$(go env GOCACHE)"
+          tar -czf lineth-backend-modcache.tar.gz -C "$GOMODCACHE_PATH" .
+          tar -czf lineth-backend-gocache.tar.gz -C "$GOCACHE_PATH" .
+          sha256sum lineth-backend-modcache.tar.gz lineth-backend-gocache.tar.gz > GO_CACHE_SHA256SUMS
+          split -b 230m -d -a 2 lineth-backend-modcache.tar.gz modcache.part.
+          split -b 230m -d -a 2 lineth-backend-gocache.tar.gz gocache.part.
+          for i in 00 01 02 03 04 05 06 07; do test -f "modcache.part.$i" || : > "modcache.part.$i"; done
+          for i in 00 01 02 03 04 05 06 07; do test -f "gocache.part.$i" || : > "gocache.part.$i"; done
+          ls -lh *.part.* *.tar.gz GO_CACHE_SHA256SUMS
+      - name: Upload modcache part 00
         uses: actions/upload-artifact@v4
         with:
-          name: besu-shomei-plugin-v1.0.7
-          path: |
-            besu-shomei-plugin-v1.0.7.zip
-            SHOMEI_PLUGIN_SHA256SUMS
+          name: lineth-backend-modcache-part-00
+          path: modcache.part.00
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-01
+          path: modcache.part.01
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-02
+          path: modcache.part.02
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-03
+          path: modcache.part.03
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-04
+          path: modcache.part.04
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-05
+          path: modcache.part.05
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 06
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-06
+          path: modcache.part.06
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload modcache part 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-modcache-part-07
+          path: modcache.part.07
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-00
+          path: gocache.part.00
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-01
+          path: gocache.part.01
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-02
+          path: gocache.part.02
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-03
+          path: gocache.part.03
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-04
+          path: gocache.part.04
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-05
+          path: gocache.part.05
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 06
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-06
+          path: gocache.part.06
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload gocache part 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-gocache-part-07
+          path: gocache.part.07
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload cache checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-backend-cache-checksums
+          path: GO_CACHE_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
