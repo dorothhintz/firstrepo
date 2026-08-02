@@ -34,7 +34,7 @@ jobs:
           path: lineth-main
           fetch-depth: 1
 
-      - name: Populate tracer Gradle cache and build outputs
+      - name: Populate and split tracer offline build
         shell: bash
         env:
           GRADLE_USER_HOME: ${{ github.workspace }}/gradle-home
@@ -44,23 +44,58 @@ jobs:
           cd lineth-main
           ./gradlew :tracer:arithmetization:testClasses --no-daemon --stacktrace
           cd "$GITHUB_WORKSPACE"
-          du -sh gradle-home
           tar -czf lineth-tracer-gradle-home.tar.gz gradle-home
+          sha256sum lineth-tracer-gradle-home.tar.gz > GRADLE_HOME_SHA256SUMS
+          split -b 240m -d -a 2 lineth-tracer-gradle-home.tar.gz gradle-home.part.
+          for i in 00 01 02 03; do test -f "gradle-home.part.$i" || touch "gradle-home.part.$i"; done
           tar -czf lineth-tracer-build-outputs.tar.gz \
             -C lineth-main \
             buildSrc/build \
             tracer/testing/build \
             tracer/arithmetization/build \
             tracer-constraints/zkevm_osaka.bin
-          sha256sum lineth-tracer-gradle-home.tar.gz lineth-tracer-build-outputs.tar.gz > GRADLE_CACHE_SHA256SUMS
+          sha256sum lineth-tracer-build-outputs.tar.gz > BUILD_OUTPUTS_SHA256SUMS
+          ls -lh gradle-home.part.* lineth-tracer-build-outputs.tar.gz
 
-      - name: Upload tracer cache and build outputs
+      - name: Upload cache part 00
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-tracer-offline-build
+          name: lineth-gradle-cache-part-00
+          path: gradle-home.part.00
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload cache part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-gradle-cache-part-01
+          path: gradle-home.part.01
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload cache part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-gradle-cache-part-02
+          path: gradle-home.part.02
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload cache part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-gradle-cache-part-03
+          path: gradle-home.part.03
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload build outputs and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-tracer-build-outputs
           path: |
-            lineth-tracer-gradle-home.tar.gz
             lineth-tracer-build-outputs.tar.gz
-            GRADLE_CACHE_SHA256SUMS
+            GRADLE_HOME_SHA256SUMS
+            BUILD_OUTPUTS_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
