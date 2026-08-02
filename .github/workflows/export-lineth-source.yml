@@ -20,21 +20,39 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - name: Archive Java toolchain
+      - name: Checkout exact Lineth snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: LFDT-Lineth/lineth-monorepo
+          ref: b660c569ef2f6756b14d548382777a41b4df382c
+          path: lineth-main
+          fetch-depth: 1
+
+      - name: Populate tracer Gradle cache
         shell: bash
+        env:
+          GRADLE_USER_HOME: ${{ github.workspace }}/gradle-home
         run: |
           set -euo pipefail
-          java -version
-          javac -version
-          tar -czf temurin-jdk25-linux-x64.tar.gz -C "$JAVA_HOME" .
-          sha256sum temurin-jdk25-linux-x64.tar.gz > JDK25_SHA256SUMS
+          cd lineth-main
+          ./gradlew :tracer:arithmetization:testClasses --no-daemon --stacktrace
+          cd "$GITHUB_WORKSPACE"
+          du -sh gradle-home
+          tar -czf lineth-tracer-gradle-home.tar.gz gradle-home
+          if [ -d "$HOME/.m2/repository/org/hyperledger/besu" ]; then
+            tar -czf lineth-besu-m2.tar.gz -C "$HOME/.m2/repository" org/hyperledger/besu
+          else
+            tar -czf lineth-besu-m2.tar.gz --files-from /dev/null
+          fi
+          sha256sum lineth-tracer-gradle-home.tar.gz lineth-besu-m2.tar.gz > GRADLE_CACHE_SHA256SUMS
 
-      - name: Upload Java toolchain
+      - name: Upload tracer Gradle cache
         uses: actions/upload-artifact@v4
         with:
-          name: temurin-jdk25-linux-x64
+          name: lineth-tracer-gradle-cache
           path: |
-            temurin-jdk25-linux-x64.tar.gz
-            JDK25_SHA256SUMS
+            lineth-tracer-gradle-home.tar.gz
+            lineth-besu-m2.tar.gz
+            GRADLE_CACHE_SHA256SUMS
           retention-days: 1
           if-no-files-found: error
