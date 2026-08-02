@@ -15,6 +15,9 @@ on:
   push:
     branches:
       - linea-nonprefix-gate4
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
