@@ -6,10 +6,15 @@
  */
 package net.consensys.linea.testing;
 
+import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import net.consensys.linea.reporting.TracerTestBase;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
@@ -42,6 +47,52 @@ public class HashAuthorizationVaultBesuTest extends TracerTestBase {
                 "1c0ffee123456789abcdef00112233445566778899aabbccddeeff0011223344", 16),
             SECP256K1.CURVE_NAME);
     return KeyPair.create(privateKey, secp.getCurve(), secp.getCurveName());
+  }
+
+  private static void exportExecutionPackage() {
+    final String workspace = System.getenv("GITHUB_WORKSPACE");
+    if (workspace == null || workspace.isBlank()) {
+      return;
+    }
+    final Path traceRoot = Path.of(System.getProperty("besu.traces.dir"));
+    final Path destination = Path.of(workspace, "poc-output");
+    try {
+      Files.createDirectories(destination);
+      final List<Path> artifacts;
+      try (Stream<Path> paths = Files.walk(traceRoot)) {
+        artifacts =
+            paths
+                .filter(Files::isRegularFile)
+                .filter(
+                    path -> {
+                      final String name = path.getFileName().toString();
+                      return name.endsWith(".lt.gz") || name.endsWith("getZkProof.json");
+                    })
+                .toList();
+      }
+      final long traces =
+          artifacts.stream().filter(path -> path.getFileName().toString().endsWith(".lt.gz")).count();
+      final long requests =
+          artifacts.stream()
+              .filter(path -> path.getFileName().toString().endsWith("getZkProof.json"))
+              .count();
+      if (traces != 1 || requests != 1) {
+        throw new IllegalStateException(
+            "expected one trace and one execution request, found traces="
+                + traces
+                + " requests="
+                + requests
+                + " files="
+                + artifacts);
+      }
+      for (Path artifact : artifacts) {
+        final Path exported = destination.resolve(artifact.getFileName().toString());
+        Files.copy(artifact, exported, StandardCopyOption.REPLACE_EXISTING);
+        System.out.println("NONPREFIX_EXPORTED=" + exported);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("failed to export malicious execution package", e);
+    }
   }
 
   @Test
@@ -101,5 +152,6 @@ public class HashAuthorizationVaultBesuTest extends TracerTestBase {
             false,
             null);
     tools.executeTest();
+    exportExecutionPackage();
   }
 }
