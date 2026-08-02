@@ -38,11 +38,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/tools"
           GOBIN="$GITHUB_WORKSPACE/tools" go install github.com/consensys/go-corset/cmd/go-corset@v1.2.10
-          "$GITHUB_WORKSPACE/tools/go-corset" --version || true
+          "$GITHUB_WORKSPACE/tools/go-corset" --version
           sha256sum "$GITHUB_WORKSPACE/tools/go-corset" > GO_CORSET_SHA256SUMS
 
-      - name: Resolve tracer testing runtime
+      - name: Build and export tracer testing runtime
         shell: bash
         env:
           GRADLE_USER_HOME: ${{ github.workspace }}/gradle-home
@@ -53,10 +54,11 @@ jobs:
           gradle.afterProject { p, state ->
             if (p.path == ':tracer:testing') {
               p.tasks.register('exportResolvedTestRuntime') {
+                dependsOn p.tasks.named('testClasses')
                 doLast {
                   def outDir = new File(rootProject.projectDir, '../runtime-jars')
                   outDir.mkdirs()
-                  p.configurations.testRuntimeClasspath.resolve().each { f ->
+                  p.configurations.testRuntimeClasspath.resolve().findAll { it.isFile() }.each { f ->
                     def digest = java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString().substring(0, 16)
                     new File(outDir, digest + '-' + f.name).bytes = f.bytes
                   }
@@ -75,13 +77,21 @@ jobs:
           sha256sum lineth-tracer-test-runtime.tar.gz > TRACER_RUNTIME_SHA256SUMS
           ls -lh lineth-tracer-test-runtime.tar.gz tools/go-corset
 
-      - name: Upload exact tools
+      - name: Upload go-corset
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-corset-and-test-runtime
+          name: go-corset-v1.2.10-linux-amd64
           path: |
             tools/go-corset
             GO_CORSET_SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload tracer test runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineth-tracer-test-runtime
+          path: |
             lineth-tracer-test-runtime.tar.gz
             TRACER_RUNTIME_SHA256SUMS
           retention-days: 1
