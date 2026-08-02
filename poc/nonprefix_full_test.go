@@ -71,7 +71,8 @@ func loadNonPrefixWitness(t *testing.T) (*config.Config, *Witness, *Request, Res
 	rsp := CraftProverOutput(cfg, &req)
 	witness := NewWitness(cfg, &req, &rsp)
 
-	pi := witness.FuncInp.SumAsField().Bytes()
+	piField := witness.FuncInp.SumAsField()
+	pi := piField.Bytes()
 	fmt.Printf("NONPREFIX_REQUEST=%s\n", requestPath)
 	fmt.Printf("NONPREFIX_BLOCK_HASH=%s\n", blocks[0].Hash())
 	fmt.Printf("NONPREFIX_PARENT_ROOT=0x%x\n", witness.FuncInp.InitialStateRootHash)
