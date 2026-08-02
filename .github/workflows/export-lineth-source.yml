@@ -10,14 +10,23 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - name: Checkout helper repository
         uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
       - name: Set up Go 1.25.7
         uses: actions/setup-go@v6
         with:
           go-version: '1.25.7'
           check-latest: true
+
       - name: Checkout exact Lineth snapshot
         uses: actions/checkout@v4
         with:
@@ -25,139 +34,60 @@ jobs:
           ref: b660c569ef2f6756b14d548382777a41b4df382c
           path: lineth-main
           fetch-depth: 1
-      - name: Populate backend execution Go caches
+
+      - name: Install exact go-corset
         shell: bash
         run: |
           set -euo pipefail
-          cd lineth-main/prover
-          go test ./backend/execution -run '^$' -count=0
-          cd "$GITHUB_WORKSPACE"
-          GOMODCACHE_PATH="$(go env GOMODCACHE)"
-          GOCACHE_PATH="$(go env GOCACHE)"
-          tar -czf lineth-backend-modcache.tar.gz -C "$GOMODCACHE_PATH" .
-          tar -czf lineth-backend-gocache.tar.gz -C "$GOCACHE_PATH" .
-          sha256sum lineth-backend-modcache.tar.gz lineth-backend-gocache.tar.gz > GO_CACHE_SHA256SUMS
-          split -b 230m -d -a 2 lineth-backend-modcache.tar.gz modcache.part.
-          split -b 230m -d -a 2 lineth-backend-gocache.tar.gz gocache.part.
-          for i in 00 01 02 03 04 05 06 07; do test -f "modcache.part.$i" || : > "modcache.part.$i"; done
-          for i in 00 01 02 03 04 05 06 07; do test -f "gocache.part.$i" || : > "gocache.part.$i"; done
-          ls -lh *.part.* *.tar.gz GO_CACHE_SHA256SUMS
-      - name: Upload modcache part 00
+          GOBIN="$GITHUB_WORKSPACE/tools" go install github.com/consensys/go-corset/cmd/go-corset@v1.2.10
+          "$GITHUB_WORKSPACE/tools/go-corset" --version
+
+      - name: Install deterministic malicious trace PoC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd lineth-main
+          python3 "$GITHUB_WORKSPACE/poc/apply_trace_patches.py"
+          mkdir -p tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation
+          mkdir -p tracer/arithmetization/src/test/java/net/consensys/linea/testing
+          cp "$GITHUB_WORKSPACE/poc/Keccak256Operation.java" \
+            tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation/Keccak256Operation.java
+          cp "$GITHUB_WORKSPACE/poc/HashAuthorizationVaultBesuTest.java" \
+            tracer/arithmetization/src/test/java/net/consensys/linea/testing/HashAuthorizationVaultBesuTest.java
+          grep -R "NONPREFIX_.*SUBSTITUTION" \
+            tracer/arithmetization/src/main/java/net/consensys/linea/zktracer/module/hub/fragment/StackFragment.java \
+            tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation/Keccak256Operation.java
+
+      - name: Generate AIR-valid malicious request
+        shell: bash
+        env:
+          ZKEVM_FORK: OSAKA
+          PRESERVE_TRACE_FILES: '1'
+          besu.traces.dir: ${{ github.workspace }}/poc-output
+          besu.plugins.dir: ${{ github.workspace }}/poc-plugins
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/tools:$(go env GOPATH)/bin:$PATH"
+          mkdir -p "$GITHUB_WORKSPACE/poc-output" "$GITHUB_WORKSPACE/poc-plugins"
+          cd lineth-main
+          ./gradlew :tracer:arithmetization:test \
+            --tests net.consensys.linea.testing.HashAuthorizationVaultBesuTest \
+            --no-daemon --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gate-full-trace.log"
+          find "$GITHUB_WORKSPACE/poc-output" -type f -maxdepth 4 -print -exec sha256sum {} \;
+          test "$(find "$GITHUB_WORKSPACE/poc-output" -name '*.lt.gz' | wc -l)" -ge 1
+          test "$(find "$GITHUB_WORKSPACE/poc-output" -name '*getZkProof.json' | wc -l)" -ge 1
+          grep -q 'NONPREFIX_EVM_SUBSTITUTION' "$GITHUB_WORKSPACE/gate-full-trace.log"
+          grep -q 'NONPREFIX_HUB_SUBSTITUTION' "$GITHUB_WORKSPACE/gate-full-trace.log"
+
+      - name: Upload malicious execution package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lineth-backend-modcache-part-00
-          path: modcache.part.00
+          name: nonprefix-malicious-execution-package
+          path: |
+            poc-output/**
+            gate-full-trace.log
+            lineth-main/tracer/arithmetization/build/test-results/test/**
+            lineth-main/tracer/arithmetization/build/reports/tests/test/**
           retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 01
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-01
-          path: modcache.part.01
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 02
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-02
-          path: modcache.part.02
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 03
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-03
-          path: modcache.part.03
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 04
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-04
-          path: modcache.part.04
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 05
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-05
-          path: modcache.part.05
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 06
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-06
-          path: modcache.part.06
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload modcache part 07
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-modcache-part-07
-          path: modcache.part.07
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 00
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-00
-          path: gocache.part.00
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 01
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-01
-          path: gocache.part.01
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 02
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-02
-          path: gocache.part.02
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 03
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-03
-          path: gocache.part.03
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 04
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-04
-          path: gocache.part.04
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 05
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-05
-          path: gocache.part.05
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 06
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-06
-          path: gocache.part.06
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload gocache part 07
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-gocache-part-07
-          path: gocache.part.07
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload cache checksums
-        uses: actions/upload-artifact@v4
-        with:
-          name: lineth-backend-cache-checksums
-          path: GO_CACHE_SHA256SUMS
-          retention-days: 1
-          if-no-files-found: error
+          if-no-files-found: warn
