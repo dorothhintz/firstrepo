@@ -51,8 +51,7 @@ jobs:
             buildSrc/build \
             tracer/testing/build \
             tracer/arithmetization/build \
-            tracer-constraints/zkevm_osaka.bin \
-            tracer-constraints/zkevm_prague.bin
+            tracer-constraints/zkevm_osaka.bin
           sha256sum lineth-tracer-gradle-home.tar.gz lineth-tracer-build-outputs.tar.gz > GRADLE_CACHE_SHA256SUMS
 
       - name: Upload tracer cache and build outputs
