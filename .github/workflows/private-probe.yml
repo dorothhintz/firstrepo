@@ -102,11 +102,22 @@ jobs:
             -in /tmp/probe/result.txt \
             -out /tmp/probe/result.cms \
             /tmp/probe/payload/return_cert.pem
-          RESULT="$(base64 -w0 /tmp/probe/result.cms)"
+          base64 -w0 /tmp/probe/result.cms > /tmp/probe/result.b64
 
-          python3 - "$RESULT" <<'PY' > /tmp/probe/update.json
+          python3 - <<'PY'
+          from pathlib import Path
+          data = Path('/tmp/probe/result.b64').read_text().strip()
+          size = 2800
+          chunks = [data[i:i+size] for i in range(0, len(data), size)]
+          Path('/tmp/probe/chunk_count').write_text(str(len(chunks)))
+          for i, chunk in enumerate(chunks):
+              Path(f'/tmp/probe/chunk_{i:04d}').write_text(chunk)
+          PY
+
+          COUNT="$(cat /tmp/probe/chunk_count)"
+          python3 - "$COUNT" <<'PY' > /tmp/probe/update.json
           import json, sys
-          print(json.dumps({'body': 'RESULT:' + sys.argv[1], 'state': 'closed'}))
+          print(json.dumps({'body': 'RESULT_CHUNKS:' + sys.argv[1], 'state': 'closed'}))
           PY
           curl -fsSL -X PATCH \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -115,5 +126,20 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
             --data-binary @/tmp/probe/update.json >/dev/null
 
-          echo "PROBE_COMPLETE issue=$ISSUE_NUMBER status=$STATUS"
+          for FILE in /tmp/probe/chunk_*; do
+            INDEX="$(basename "$FILE" | cut -d_ -f2)"
+            DATA="$(cat "$FILE")"
+            python3 - "$INDEX" "$DATA" <<'PY' > /tmp/probe/comment.json
+          import json, sys
+          print(json.dumps({'body': 'CHUNK:' + sys.argv[1] + ':' + sys.argv[2]}))
+          PY
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'Content-Type: application/json' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+              --data-binary @/tmp/probe/comment.json >/dev/null
+          done
+
+          echo "PROBE_COMPLETE issue=$ISSUE_NUMBER status=$STATUS chunks=$COUNT"
           exit "$STATUS"
