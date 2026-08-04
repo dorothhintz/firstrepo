@@ -13,8 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Create one-time encrypted mailbox
+      - name: Create encrypted mailbox issue
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/probe
@@ -23,52 +25,59 @@ jobs:
           openssl req -new -x509 -key /tmp/probe/private.pem \
             -out /tmp/probe/cert.pem -subj '/CN=one-time-probe' -days 1
           TOKEN="$(openssl rand -hex 12)"
+          CERT="$(base64 -w0 /tmp/probe/cert.pem)"
           printf '%s' "$TOKEN" > /tmp/probe/token
-          echo "PROBE_TOKEN=$TOKEN"
-          echo "PROBE_CERT_BEGIN"
-          base64 -w0 /tmp/probe/cert.pem
-          echo
-          echo "PROBE_CERT_END"
 
-      - name: Receive and execute encrypted payload
+          python3 - "$GITHUB_RUN_ID" "$TOKEN" "$CERT" <<'PY' > /tmp/probe/create.json
+          import json, sys
+          run_id, token, cert = sys.argv[1:]
+          print(json.dumps({
+              'title': 'mailbox-' + run_id,
+              'body': 'TOKEN:' + token + '\nCERT:' + cert,
+          }))
+          PY
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'Content-Type: application/json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues" \
+            --data-binary @/tmp/probe/create.json > /tmp/probe/issue.json
+          python3 - <<'PY' > /tmp/probe/issue_number
+          import json
+          with open('/tmp/probe/issue.json', encoding='utf-8') as f:
+              print(json.load(f)['number'])
+          PY
+
+      - name: Receive, execute, and return encrypted payload
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TOKEN="$(cat /tmp/probe/token)"
-          ISSUE_NUMBER=''
+          ISSUE_NUMBER="$(cat /tmp/probe/issue_number)"
 
-          for _ in $(seq 1 240); do
+          for _ in $(seq 1 360); do
             curl -fsSL \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
-              > /tmp/probe/issues.json
-
-            python3 - "$TOKEN" <<'PY' > /tmp/probe/mailbox.txt
-          import json, sys
-          needle = 'probe-' + sys.argv[1]
-          with open('/tmp/probe/issues.json', encoding='utf-8') as f:
-              issues = json.load(f)
-          for issue in issues:
-              if issue.get('title') == needle and not issue.get('pull_request'):
-                  body = (issue.get('body') or '').strip()
-                  if body:
-                      print(issue['number'])
-                      print(body)
-                      break
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+              > /tmp/probe/current.json
+            python3 - <<'PY' > /tmp/probe/payload.b64
+          import json
+          with open('/tmp/probe/current.json', encoding='utf-8') as f:
+              body = (json.load(f).get('body') or '').strip()
+          if body.startswith('PAYLOAD:'):
+              print(body[len('PAYLOAD:'):].strip())
           PY
-            if [ -s /tmp/probe/mailbox.txt ]; then
-              ISSUE_NUMBER="$(head -n1 /tmp/probe/mailbox.txt)"
-              tail -n +2 /tmp/probe/mailbox.txt | tr -d '\n\r ' \
-                | base64 -d > /tmp/probe/payload.cms
+            if [ -s /tmp/probe/payload.b64 ]; then
+              tr -d '\n\r ' < /tmp/probe/payload.b64 | base64 -d \
+                > /tmp/probe/payload.cms
               break
             fi
             sleep 5
           done
 
-          test -n "$ISSUE_NUMBER"
+          test -s /tmp/probe/payload.cms
           openssl cms -decrypt -binary -inform DER \
             -in /tmp/probe/payload.cms \
             -inkey /tmp/probe/private.pem \
@@ -89,7 +98,6 @@ jobs:
             printf 'exit_status=%s\n' "$STATUS"
             cat /tmp/probe/test.log
           } > /tmp/probe/result.txt
-
           openssl cms -encrypt -binary -aes-256-cbc -outform DER \
             -in /tmp/probe/result.txt \
             -out /tmp/probe/result.cms \
@@ -98,7 +106,7 @@ jobs:
 
           python3 - "$RESULT" <<'PY' > /tmp/probe/update.json
           import json, sys
-          print(json.dumps({'body': 'RESULT:' + sys.argv[1]}))
+          print(json.dumps({'body': 'RESULT:' + sys.argv[1], 'state': 'closed'}))
           PY
           curl -fsSL -X PATCH \
             -H "Authorization: Bearer $GH_TOKEN" \
