@@ -1,0 +1,1 @@
+Generic encrypted CI trigger for current-code-only pinned-library execution.
