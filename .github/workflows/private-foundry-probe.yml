@@ -18,6 +18,15 @@ jobs:
         with:
           version: stable
 
+      - name: Checkout pinned Arbitrum contracts
+        uses: actions/checkout@v4
+        with:
+          repository: OffchainLabs/nitro-contracts
+          ref: 67487333202561b74492d07de62a4f56be28560e
+          path: nitro-contracts
+          fetch-depth: 1
+          submodules: recursive
+
       - name: Generate one-time mailbox key
         shell: bash
         run: |
