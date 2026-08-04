@@ -1,0 +1,1 @@
+Generic encrypted CI trigger for normal-pipeline pinned timer execution.
