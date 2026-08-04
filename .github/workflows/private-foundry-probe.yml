@@ -18,10 +18,8 @@ jobs:
         with:
           version: stable
 
-      - name: Create encrypted mailbox issue
+      - name: Generate one-time mailbox key
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/probe
@@ -29,15 +27,30 @@ jobs:
             -out /tmp/probe/private.pem >/dev/null 2>&1
           openssl req -new -x509 -key /tmp/probe/private.pem \
             -out /tmp/probe/cert.pem -subj '/CN=one-time-probe' -days 1
-          TOKEN="$(openssl rand -hex 12)"
-          CERT="$(base64 -w0 /tmp/probe/cert.pem)"
+          openssl rand -hex 12 > /tmp/probe/token
 
-          python3 - "$GITHUB_RUN_ID" "$TOKEN" "$CERT" <<'PY' > /tmp/probe/create.json
+      - name: Publish exact mailbox certificate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailbox-cert-${{ github.run_id }}
+          path: /tmp/probe/cert.pem
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Create encrypted mailbox issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(cat /tmp/probe/token)"
+          ARTIFACT="mailbox-cert-$GITHUB_RUN_ID"
+          python3 - "$GITHUB_RUN_ID" "$TOKEN" "$ARTIFACT" <<'PY' > /tmp/probe/create.json
           import json, sys
-          run_id, token, cert = sys.argv[1:]
+          run_id, token, artifact = sys.argv[1:]
           print(json.dumps({
               'title': 'mailbox-' + run_id,
-              'body': 'TOKEN:' + token + '\nCERT:' + cert,
+              'body': 'TOKEN:' + token + '\nCERT_ARTIFACT:' + artifact,
           }))
           PY
           curl -fsSL -X POST \
