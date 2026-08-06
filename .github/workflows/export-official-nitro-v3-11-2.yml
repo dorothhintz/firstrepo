@@ -3,6 +3,7 @@ name: Export official Nitro v3.11.2 tools
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
