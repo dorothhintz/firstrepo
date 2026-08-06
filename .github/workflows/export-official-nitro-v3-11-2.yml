@@ -1,15 +1,20 @@
 name: Export official Nitro v3.11.2 tools
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ci/export-official-nitro-v3-11-2.txt
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
 
 jobs:
   export:
-    if: github.event.pull_request.head.ref == 'trigger-official-nitro-v3-11-2-export'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'trigger-official-nitro-v3-11-2-export'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
