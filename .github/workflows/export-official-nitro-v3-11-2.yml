@@ -1,0 +1,52 @@
+name: Export official Nitro v3.11.2 tools
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.event.pull_request.head.ref == 'trigger-official-nitro-v3-11-2-export'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Pull pinned official validator image
+        run: |
+          set -euo pipefail
+          IMAGE='offchainlabs/nitro-node:v3.11.2-3599aca-validator'
+          INDEX='sha256:0f020c6cdd16cb0c6fe0d40a067ff9399f698a327d2d1358ba56fc4e0d7f3f91'
+          docker pull --platform linux/amd64 "$IMAGE"
+          docker image inspect "$IMAGE" > image-inspect.json
+          docker image inspect --format '{{json .RepoDigests}}' "$IMAGE" | tee repo-digests.json
+          grep -q "$INDEX" repo-digests.json
+
+      - name: Extract official binaries and machine artifacts
+        run: |
+          set -euo pipefail
+          IMAGE='offchainlabs/nitro-node:v3.11.2-3599aca-validator'
+          mkdir -p export/bin export/machines
+          CID="$(docker create --platform linux/amd64 "$IMAGE")"
+          trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+          docker cp "$CID:/usr/local/bin/prover" export/bin/prover
+          docker cp "$CID:/usr/local/bin/jit" export/bin/jit
+          docker cp "$CID:/home/user/target/machines/latest/." export/machines/
+          cp image-inspect.json repo-digests.json export/
+          chmod 755 export/bin/prover export/bin/jit
+          export/bin/prover --help > export/prover-help.txt 2>&1 || true
+          export/bin/jit --help > export/jit-help.txt 2>&1 || true
+          find export -type f -print0 | sort -z | xargs -0 sha256sum > export/SHA256SUMS
+          tar -C export -czf official-nitro-v3.11.2-amd64.tar.gz .
+          sha256sum official-nitro-v3.11.2-amd64.tar.gz | tee official-nitro-v3.11.2-amd64.tar.gz.sha256
+
+      - name: Upload official tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-nitro-v3.11.2-amd64
+          path: |
+            official-nitro-v3.11.2-amd64.tar.gz
+            official-nitro-v3.11.2-amd64.tar.gz.sha256
+          retention-days: 1
+          if-no-files-found: error
