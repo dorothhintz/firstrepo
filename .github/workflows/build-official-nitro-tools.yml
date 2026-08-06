@@ -1,0 +1,80 @@
+name: Build official Nitro prover and JIT
+
+on:
+  push:
+    branches:
+      - nitro-official-build-v3-11-2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout pinned Nitro release
+        uses: actions/checkout@v4
+        with:
+          repository: OffchainLabs/nitro
+          ref: 3599acae1ad2fab4059fc46453c9cd3294126641
+          submodules: recursive
+          path: nitro
+          fetch-depth: 1
+
+      - name: Record pinned source state
+        working-directory: nitro
+        run: |
+          git rev-parse HEAD | tee ../nitro-commit.txt
+          git submodule status --recursive | tee ../submodules.txt
+
+      - name: Install official build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libssl-dev wabt lld-14
+          sudo ln -sf /usr/bin/wasm-ld-14 /usr/local/bin/wasm-ld
+
+      - name: Setup pinned Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.93.0
+          targets: wasm32-wasip1,wasm32-unknown-unknown
+          components: llvm-tools-preview
+
+      - name: Setup pinned Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: nitro/go.mod
+          cache: true
+          cache-dependency-path: nitro/go.sum
+
+      - name: Record toolchain
+        run: |
+          rustc --version --verbose | tee rustc-version.txt
+          cargo --version | tee cargo-version.txt
+          go version | tee go-version.txt
+          clang --version | head -1 | tee clang-version.txt
+
+      - name: Build unchanged official prover and JIT
+        working-directory: nitro
+        run: |
+          make -j2 build-prover-bin build-jit
+          ./target/bin/prover --help > ../prover-help.txt 2>&1 || true
+          ./target/bin/jit --help > ../jit-help.txt 2>&1 || true
+
+      - name: Package and hash binaries
+        run: |
+          mkdir -p official-nitro-tools
+          cp nitro/target/bin/prover nitro/target/bin/jit official-nitro-tools/
+          cp nitro-commit.txt submodules.txt rustc-version.txt cargo-version.txt go-version.txt clang-version.txt prover-help.txt jit-help.txt official-nitro-tools/
+          sha256sum official-nitro-tools/* | tee official-nitro-tools/SHA256SUMS
+          tar -C official-nitro-tools -czf official-nitro-tools-v3.11.2-linux-amd64.tar.gz .
+
+      - name: Upload official binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-nitro-tools-v3.11.2-linux-amd64
+          path: official-nitro-tools-v3.11.2-linux-amd64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
