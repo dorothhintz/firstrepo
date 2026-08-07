@@ -1,0 +1,2 @@
+trigger=2026-08-07T19:40Z
+purpose=encrypted-local-nitro-gates-abc
