@@ -1,3 +1,3 @@
-trigger=2026-08-07T23:45Z
-purpose=encrypted-local-nitro-gate-c-real-wavm
-attempt=10
+trigger=2026-08-08T00:20+01:00
+purpose=encrypted-local-nitro-gate-c-cache-isolated-real-osp
+attempt=11
