@@ -156,7 +156,7 @@ jobs:
           tar -xzf /tmp/lbold-mailbox/payload.tar.gz \
             -C /tmp/lbold-mailbox/payload
           test -f /tmp/lbold-mailbox/payload/run.sh
-          test -f /tmp/lbold-mailbox/payload/return_cert.pem
+          test -f /tmp/lbold-mailbox/payload/return_key.txt
           chmod 700 /tmp/lbold-mailbox/payload/run.sh
           printf '%s\n' 'payload-ready' > /tmp/lbold-mailbox/stage
 
@@ -200,13 +200,13 @@ jobs:
             fi
           } > /tmp/lbold-mailbox/result.txt
 
-          if [ -f /tmp/lbold-mailbox/payload/return_cert.pem ]; then
-            openssl cms -encrypt -binary -aes-256-cbc -outform DER \
+          if [ -f /tmp/lbold-mailbox/payload/return_key.txt ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -salt \
+              -pass file:/tmp/lbold-mailbox/payload/return_key.txt \
               -in /tmp/lbold-mailbox/result.txt \
-              -out /tmp/lbold-mailbox/result.cms \
-              /tmp/lbold-mailbox/payload/return_cert.pem
-            sha256sum /tmp/lbold-mailbox/result.cms \
-              > /tmp/lbold-mailbox/result.cms.sha256
+              -out /tmp/lbold-mailbox/result.enc
+            sha256sum /tmp/lbold-mailbox/result.enc \
+              > /tmp/lbold-mailbox/result.enc.sha256
           fi
 
       - name: Update mailbox issue
@@ -245,8 +245,8 @@ jobs:
         with:
           name: lbold-result-${{ github.run_id }}
           path: |
-            /tmp/lbold-mailbox/result.cms
-            /tmp/lbold-mailbox/result.cms.sha256
+            /tmp/lbold-mailbox/result.enc
+            /tmp/lbold-mailbox/result.enc.sha256
             /tmp/lbold-mailbox/status
             /tmp/lbold-mailbox/stage
             /tmp/lbold-mailbox/transport-sha-mismatch
