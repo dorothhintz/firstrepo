@@ -1,3 +1,3 @@
-trigger=2026-08-07T20:20Z
-purpose=encrypted-local-nitro-gates-abc-foundry
-attempt=5
+trigger=2026-08-07T20:32Z
+purpose=encrypted-local-nitro-gates-abc-foundry-explicit-path
+attempt=6
