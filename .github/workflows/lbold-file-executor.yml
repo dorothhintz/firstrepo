@@ -1,0 +1,166 @@
+name: Private file-backed Nitro executor
+
+on:
+  push:
+    branches: [lbold-private-exec]
+    paths:
+      - ci/lbold-exec-trigger.txt
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Generate one-time mailbox key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/lbold-mailbox
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            -out /tmp/lbold-mailbox/private.pem >/dev/null 2>&1
+          openssl req -new -x509 \
+            -key /tmp/lbold-mailbox/private.pem \
+            -out /tmp/lbold-mailbox/cert.pem \
+            -subj '/CN=one-time-lbold-executor' -days 1
+          openssl rand -hex 12 > /tmp/lbold-mailbox/token
+
+      - name: Publish one-time certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: lbold-cert-${{ github.run_id }}
+          path: /tmp/lbold-mailbox/cert.pem
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Create mailbox issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(cat /tmp/lbold-mailbox/token)"
+          PAYLOAD_PATH="mailbox/$GITHUB_RUN_ID/payload.b64"
+          SHA_PATH="mailbox/$GITHUB_RUN_ID/payload.sha256"
+          python3 - "$GITHUB_RUN_ID" "$TOKEN" "$PAYLOAD_PATH" "$SHA_PATH" <<'PY' \
+            > /tmp/lbold-mailbox/create.json
+          import json, sys
+          run_id, token, payload_path, sha_path = sys.argv[1:]
+          body = '\n'.join([
+              'TOKEN:' + token,
+              'PAYLOAD_PATH:' + payload_path,
+              'SHA_PATH:' + sha_path,
+          ])
+          print(json.dumps({'title': 'lbold-file-mailbox-' + run_id, 'body': body}))
+          PY
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'Content-Type: application/json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues" \
+            --data-binary @/tmp/lbold-mailbox/create.json \
+            > /tmp/lbold-mailbox/issue.json
+          jq -r .number /tmp/lbold-mailbox/issue.json > /tmp/lbold-mailbox/issue_number
+
+      - name: Receive, verify, decrypt, and execute payload
+        id: payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ISSUE_NUMBER="$(cat /tmp/lbold-mailbox/issue_number)"
+          PAYLOAD_API="https://api.github.com/repos/$GITHUB_REPOSITORY/contents/mailbox/$GITHUB_RUN_ID/payload.b64?ref=lbold-private-exec"
+          SHA_API="https://api.github.com/repos/$GITHUB_REPOSITORY/contents/mailbox/$GITHUB_RUN_ID/payload.sha256?ref=lbold-private-exec"
+
+          FOUND=0
+          for _ in $(seq 1 2160); do
+            if curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github.raw+json' \
+              "$PAYLOAD_API" > /tmp/lbold-mailbox/payload.b64 2>/dev/null \
+              && curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github.raw+json' \
+              "$SHA_API" > /tmp/lbold-mailbox/payload.sha256 2>/dev/null; then
+              FOUND=1
+              break
+            fi
+            sleep 5
+          done
+          test "$FOUND" = 1
+
+          tr -d '\n\r ' < /tmp/lbold-mailbox/payload.b64 \
+            | base64 -d > /tmp/lbold-mailbox/payload.cms
+          EXPECTED_SHA="$(tr -d '\n\r ' < /tmp/lbold-mailbox/payload.sha256)"
+          ACTUAL_SHA="$(sha256sum /tmp/lbold-mailbox/payload.cms | awk '{print $1}')"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+
+          openssl cms -decrypt -binary -inform DER \
+            -in /tmp/lbold-mailbox/payload.cms \
+            -inkey /tmp/lbold-mailbox/private.pem \
+            -recip /tmp/lbold-mailbox/cert.pem \
+            -out /tmp/lbold-mailbox/payload.tar.gz
+          mkdir -p /tmp/lbold-mailbox/payload
+          tar -xzf /tmp/lbold-mailbox/payload.tar.gz \
+            -C /tmp/lbold-mailbox/payload
+          test -f /tmp/lbold-mailbox/payload/run.sh
+          test -f /tmp/lbold-mailbox/payload/return_cert.pem
+          chmod 700 /tmp/lbold-mailbox/payload/run.sh
+
+          set +e
+          /tmp/lbold-mailbox/payload/run.sh \
+            > /tmp/lbold-mailbox/test.log 2>&1
+          STATUS=$?
+          set -e
+
+          {
+            printf 'exit_status=%s\n' "$STATUS"
+            cat /tmp/lbold-mailbox/test.log
+          } > /tmp/lbold-mailbox/result.txt
+          openssl cms -encrypt -binary -aes-256-cbc -outform DER \
+            -in /tmp/lbold-mailbox/result.txt \
+            -out /tmp/lbold-mailbox/result.cms \
+            /tmp/lbold-mailbox/payload/return_cert.pem
+          printf '%s\n' "$STATUS" > /tmp/lbold-mailbox/status
+          sha256sum /tmp/lbold-mailbox/result.cms \
+            > /tmp/lbold-mailbox/result.cms.sha256
+
+          RESULT_ARTIFACT="lbold-result-$GITHUB_RUN_ID"
+          python3 - "$RESULT_ARTIFACT" "$STATUS" <<'PY' \
+            > /tmp/lbold-mailbox/update.json
+          import json, sys
+          artifact, status = sys.argv[1:]
+          print(json.dumps({
+              'body': 'RESULT_ARTIFACT:' + artifact + '\nSTATUS:' + status,
+              'state': 'closed',
+          }))
+          PY
+          curl -fsSL -X PATCH \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'Content-Type: application/json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --data-binary @/tmp/lbold-mailbox/update.json >/dev/null
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Publish encrypted result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lbold-result-${{ github.run_id }}
+          path: |
+            /tmp/lbold-mailbox/result.cms
+            /tmp/lbold-mailbox/result.cms.sha256
+            /tmp/lbold-mailbox/status
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: Propagate payload exit status
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.payload.outputs.status }}" = 0
