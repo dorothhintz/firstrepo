@@ -43,16 +43,16 @@ jobs:
         run: |
           set -euo pipefail
           TOKEN="$(cat /tmp/lbold-mailbox/token)"
-          PAYLOAD_PATH="mailbox/$GITHUB_RUN_ID/payload.b64"
-          SHA_PATH="mailbox/$GITHUB_RUN_ID/payload.sha256"
-          python3 - "$GITHUB_RUN_ID" "$TOKEN" "$PAYLOAD_PATH" "$SHA_PATH" <<'PY' \
+          PARTS_PATH="mailbox/$GITHUB_RUN_ID/parts"
+          META_PATH="mailbox/$GITHUB_RUN_ID/meta.txt"
+          python3 - "$GITHUB_RUN_ID" "$TOKEN" "$PARTS_PATH" "$META_PATH" <<'PY' \
             > /tmp/lbold-mailbox/create.json
           import json, sys
-          run_id, token, payload_path, sha_path = sys.argv[1:]
+          run_id, token, parts_path, meta_path = sys.argv[1:]
           body = '\n'.join([
               'TOKEN:' + token,
-              'PAYLOAD_PATH:' + payload_path,
-              'SHA_PATH:' + sha_path,
+              'PARTS_PATH:' + parts_path,
+              'META_PATH:' + meta_path,
           ])
           print(json.dumps({'title': 'lbold-file-mailbox-' + run_id, 'body': body}))
           PY
@@ -73,19 +73,14 @@ jobs:
         run: |
           set -euo pipefail
           ISSUE_NUMBER="$(cat /tmp/lbold-mailbox/issue_number)"
-          PAYLOAD_API="https://api.github.com/repos/$GITHUB_REPOSITORY/contents/mailbox/$GITHUB_RUN_ID/payload.b64?ref=lbold-private-exec"
-          SHA_API="https://api.github.com/repos/$GITHUB_REPOSITORY/contents/mailbox/$GITHUB_RUN_ID/payload.sha256?ref=lbold-private-exec"
+          META_API="https://api.github.com/repos/$GITHUB_REPOSITORY/contents/mailbox/$GITHUB_RUN_ID/meta.txt?ref=lbold-private-exec"
 
           FOUND=0
           for _ in $(seq 1 2160); do
             if curl -fsSL \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H 'Accept: application/vnd.github.raw+json' \
-              "$PAYLOAD_API" > /tmp/lbold-mailbox/payload.b64 2>/dev/null \
-              && curl -fsSL \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H 'Accept: application/vnd.github.raw+json' \
-              "$SHA_API" > /tmp/lbold-mailbox/payload.sha256 2>/dev/null; then
+              "$META_API" > /tmp/lbold-mailbox/meta.txt 2>/dev/null; then
               FOUND=1
               break
             fi
@@ -93,9 +88,31 @@ jobs:
           done
           test "$FOUND" = 1
 
+          PARTS="$(sed -n 's/^PARTS=//p' /tmp/lbold-mailbox/meta.txt | head -1)"
+          EXPECTED_SHA="$(sed -n 's/^SHA256=//p' /tmp/lbold-mailbox/meta.txt | head -1)"
+          test -n "$PARTS"
+          test -n "$EXPECTED_SHA"
+
+          : > /tmp/lbold-mailbox/payload.b64
+          for i in $(seq 0 $((PARTS - 1))); do
+            PART_NAME="$(printf 'part-%03d.b64' "$i")"
+            PART_API="https://api.github.com/repos/$GITHUB_REPOSITORY/contents/mailbox/$GITHUB_RUN_ID/parts/$PART_NAME?ref=lbold-private-exec"
+            PART_FOUND=0
+            for _ in $(seq 1 120); do
+              if curl -fsSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H 'Accept: application/vnd.github.raw+json' \
+                "$PART_API" >> /tmp/lbold-mailbox/payload.b64 2>/dev/null; then
+                PART_FOUND=1
+                break
+              fi
+              sleep 2
+            done
+            test "$PART_FOUND" = 1
+          done
+
           tr -d '\n\r ' < /tmp/lbold-mailbox/payload.b64 \
             | base64 -d > /tmp/lbold-mailbox/payload.cms
-          EXPECTED_SHA="$(tr -d '\n\r ' < /tmp/lbold-mailbox/payload.sha256)"
           ACTUAL_SHA="$(sha256sum /tmp/lbold-mailbox/payload.cms | awk '{print $1}')"
           test "$ACTUAL_SHA" = "$EXPECTED_SHA"
 
