@@ -1,0 +1,55 @@
+name: Starknet preprocessed-root PoC
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  poc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Checkout exact proving commit
+        uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/proving
+          ref: 9f1aa0ec0079447df64590e28235947f547e4310
+          path: proving
+          fetch-depth: 1
+
+      - name: Verify exact commit and toolchain
+        working-directory: proving
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "9f1aa0ec0079447df64590e28235947f547e4310"
+          cat rust-toolchain.toml
+
+      - name: Install exact Rust nightly
+        run: |
+          set -euxo pipefail
+          rustup toolchain install nightly-2026-01-15 --profile minimal
+          rustup component add rust-src --toolchain nightly-2026-01-15
+          rustc +nightly-2026-01-15 --version
+          cargo +nightly-2026-01-15 --version
+
+      - name: Inject PoC as integration test
+        run: |
+          set -euxo pipefail
+          cp starknet-poc/preprocessed_root_poc.rs proving/crates/prover/tests/preprocessed_root_poc.rs
+          grep -n "FULL_STARK_WITH_NONCANONICAL_PREPROCESSED_ROOT_ACCEPTED" proving/crates/prover/tests/preprocessed_root_poc.rs
+
+      - name: Run full-STARK noncanonical preprocessed-root PoC
+        working-directory: proving
+        env:
+          RUST_MIN_STACK: "67108864"
+          RUST_BACKTRACE: "1"
+        run: |
+          set -euxo pipefail
+          cargo +nightly-2026-01-15 test -p stwo-cairo-prover \
+            --test preprocessed_root_poc \
+            poc_full_stark_accepts_noncanonical_preprocessed_root \
+            -- --exact --nocapture
