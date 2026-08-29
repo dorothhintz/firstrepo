@@ -44,13 +44,16 @@ fn poc_add_mod_terminal_n_is_not_constrained_by_air() {
     println!("LAST_ADD_MOD_N={last_n}");
     assert_eq!(last_n, 2);
 
-    // Produce and verify a complete STARK with the unmodified sharp-8.0 prover/verifier.
-    // CanonicalSmall only reduces PoC resource use; the add_mod AIR is the same component used
-    // by the production canonical trace.
+    // Use the production Cairo prover security target: 26 PoW bits + 70 FRI queries at blowup 2
+    // = 96 bits. CanonicalSmall only reduces the fixed preprocessed-table footprint; the AddMod
+    // AIR component and the malicious execution are unchanged.
+    let production_fri = FriConfig::new(26, 0, 1, 70, 1);
+    assert_eq!(production_fri.security_bits(), 96);
+    println!("FRI_SECURITY_BITS={}", production_fri.security_bits());
     let prover_params = ProverParameters {
         channel_hash: ChannelHash::Blake2s,
         channel_salt: 0,
-        fri_config: FriConfig::default(),
+        fri_config: production_fri,
         preprocessed_trace: PreProcessedTraceVariant::CanonicalSmall,
         store_polynomials_coefficients: false,
         include_all_preprocessed_columns: false,
@@ -61,7 +64,7 @@ fn poc_add_mod_terminal_n_is_not_constrained_by_air() {
         .expect("STWO should produce the malicious proof if terminal n is unconstrained");
     verify_cairo::<Blake2sMerkleChannel>(proof.into())
         .expect("unmodified sharp-8.0 verifier accepted malicious terminal n");
-    println!("STWO_FULL_STARK_ACCEPTED_TERMINAL_N_2");
+    println!("STWO_FULL_STARK_ACCEPTED_TERMINAL_N_2_AT_96_BITS");
 
     // Run the identical compiled Cairo program with Cairo VM secure-run checks enabled.
     // The modulo builtin's production security check requires final n == batch_size (1).
