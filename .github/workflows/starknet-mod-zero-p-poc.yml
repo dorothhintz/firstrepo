@@ -7,7 +7,7 @@ on:
 jobs:
   poc:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout harness
         uses: actions/checkout@v4
@@ -67,6 +67,9 @@ jobs:
             proving/crates/prover/tests/mod_zero_p_poc.rs
           cp starknet-mod-zero-p-poc/mul_mod_zero_p_poc.rs \
             proving/crates/prover/tests/mul_mod_zero_p_poc.rs
+          mkdir -p proving/crates/stwo_run_and_prove_recursive_tree/tests
+          cp starknet-mod-zero-p-poc/leaf_zero_p_poc.rs \
+            proving/crates/stwo_run_and_prove_recursive_tree/tests/leaf_zero_p_poc.rs
 
       - name: Execute AddMod full STARK vs secure VM PoC
         working-directory: proving
@@ -90,4 +93,17 @@ jobs:
           cargo +nightly-2026-01-15 test -p stwo-cairo-prover \
             --test mul_mod_zero_p_poc \
             poc_mul_mod_zero_modulus_is_accepted_by_air \
+            -- --exact --nocapture
+
+      - name: Execute canonical-small recursive leaf registry PoC
+        working-directory: proving
+        env:
+          RUST_MIN_STACK: 67108864
+          RUST_BACKTRACE: 1
+        run: |
+          set -euxo pipefail
+          cargo +nightly-2026-01-15 test --release \
+            -p stwo-run-and-prove-recursive-tree \
+            --test leaf_zero_p_poc \
+            poc_canonical_small_leaf_registry_accepts_zero_modulus_task \
             -- --exact --nocapture
