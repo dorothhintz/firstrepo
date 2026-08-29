@@ -1,0 +1,114 @@
+name: Linea non-prefix Gate 4
+
+permissions:
+  contents: read
+
+env:
+  LINEA_COMMIT: b660c569ef2f6756b14d548382777a41b4df382c
+  ZKEVM_FORK: OSAKA
+  GOCORSET_FLAGS: -b1024 -v --ansi-escapes=false --report --air
+  JUNIT_TESTS_PARALLELISM: "1"
+  PARAMETERIZED_TESTS_SAMPLE_SIZE: "1"
+  GOMEMLIMIT: 12GiB
+
+on:
+  push:
+    branches:
+      - linea-nonprefix-gate4
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  trace-control-and-attack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          path: harness
+
+      - name: Checkout pinned Linea source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          repository: LFDT-Lineth/lineth-monorepo
+          ref: b660c569ef2f6756b14d548382777a41b4df382c
+          path: linea
+          fetch-depth: 1
+          submodules: false
+
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.24.6
+          cache-dependency-path: linea/**/*.sum
+
+      - name: Install Java 25
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520
+        with:
+          java-version: "25"
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c
+        with:
+          cache-read-only: true
+
+      - name: Install trace harness
+        run: |
+          set -euxo pipefail
+          mkdir -p linea/tracer/arithmetization/src/test/java/net/consensys/linea/testing
+          mkdir -p out/control out/attack
+          cp harness/linea-poc/gate3_hash_authorization_vault_trace_test.java \
+            linea/tracer/arithmetization/src/test/java/net/consensys/linea/testing/HashAuthorizationVaultTraceTest.java
+          git -C linea status --short
+
+      - name: Run identical-state control
+        working-directory: linea
+        env:
+          JAVA_OPTS: -Dorg.gradle.daemon=false -Xmx8g
+          NONPREFIX_TRACE_OUTPUT: ${{ github.workspace }}/out/control/control.lt.gz
+        run: |
+          set -o pipefail
+          env -u NONPREFIX_ATTACK ./gradlew --no-daemon :tracer:arithmetization:test \
+            --tests net.consensys.linea.testing.HashAuthorizationVaultTraceTest \
+            --info 2>&1 | tee "${{ github.workspace }}/out/control/control.log"
+
+      - name: Run dishonest execution trace
+        working-directory: linea
+        env:
+          JAVA_OPTS: -Dorg.gradle.daemon=false -Xmx8g
+          NONPREFIX_ATTACK: "1"
+          NONPREFIX_TRACE_OUTPUT: ${{ github.workspace }}/out/attack/attack.lt.gz
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :tracer:arithmetization:test \
+            --tests net.consensys.linea.testing.HashAuthorizationVaultTraceTest \
+            --rerun-tasks --info 2>&1 | tee "${{ github.workspace }}/out/attack/attack.log"
+
+      - name: Extract exact observations
+        if: always()
+        run: |
+          set -euxo pipefail
+          mkdir -p out/control out/attack
+          grep -E '^(mode|sourceKeccakInput|substitutedKeccakPreimage|reportedKeccakResult|substitutionHits|attacker|vault|deployRlp|withdrawRlp|initialStateRoot|finalStateRoot|initialAttackerBalance|finalAttackerBalance|finalVaultBalance|transactionSuccess|tracePath|traceSha256)=' \
+            out/control/control.log > out/control/observations.txt || true
+          grep -E '^(mode|sourceKeccakInput|substitutedKeccakPreimage|reportedKeccakResult|substitutionHits|attacker|vault|deployRlp|withdrawRlp|initialStateRoot|finalStateRoot|initialAttackerBalance|finalAttackerBalance|finalVaultBalance|transactionSuccess|tracePath|traceSha256)=' \
+            out/attack/attack.log > out/attack/observations.txt || true
+          sha256sum out/control/control.lt.gz out/attack/attack.lt.gz | tee out/trace-files.sha256 || true
+          cat out/control/observations.txt || true
+          cat out/attack/observations.txt || true
+
+      - name: Upload Gate 4 trace evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linea-nonprefix-gate4-traces
+          path: |
+            out/**
+            linea/tracer/arithmetization/build/test-results/test/**
+            linea/tracer/arithmetization/build/reports/tests/test/**
+          if-no-files-found: warn
+          retention-days: 7
