@@ -8,12 +8,12 @@ use cairo_vm::types::layout_name::LayoutName;
 use cairo_vm::types::program::Program;
 use stwo::core::fri::FriConfig;
 use stwo::core::vcs_lifted::blake2_merkle::Blake2sMerkleChannel;
+use stwo_cairo_common::preprocessed_columns::preprocessed_trace::PreProcessedTraceVariant;
 use stwo_cairo_dev_utils::utils::get_compiled_cairo_program_path;
 use stwo_cairo_dev_utils::vm_utils::{ProgramType, run_and_adapt};
 use stwo_cairo_prover::prover::{
     ChannelHash, LiftingSizePolicy, ProverParameters, prove_cairo,
 };
-use stwo_cairo_common::preprocessed_columns::preprocessed_trace::PreProcessedTraceVariant;
 
 #[test]
 fn poc_add_mod_terminal_n_is_not_constrained_by_air() {
@@ -83,13 +83,15 @@ fn poc_add_mod_terminal_n_is_not_constrained_by_air() {
     let mut exec_scopes = ExecutionScopes::new();
     exec_scopes.insert_value("program_object", program.clone());
     let mut hint_processor = BuiltinHintProcessor::new_empty();
-    let err = cairo_run_program_with_initial_scope(
+    let err = match cairo_run_program_with_initial_scope(
         &program,
         &config,
         &mut hint_processor,
         exec_scopes,
-    )
-    .expect_err("secure Cairo VM must reject terminal n=2");
+    ) {
+        Ok(_) => panic!("secure Cairo VM unexpectedly accepted terminal n=2"),
+        Err(err) => err,
+    };
 
     let err_text = format!("{err:?}");
     println!("CAIRO_VM_SECURE_REJECT={err_text}");
