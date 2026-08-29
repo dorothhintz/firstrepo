@@ -1,0 +1,37 @@
+name: Starknet AIR boundary inventory
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact proving commit
+        uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/proving
+          ref: 9f1aa0ec0079447df64590e28235947f547e4310
+          fetch-depth: 1
+
+      - name: Inventory soundness-sensitive call sites
+        run: |
+          set -euo pipefail
+          echo '=== POSITIVE SUBROUTINE DEFINITIONS ==='
+          find crates/cairo-air/src/components/subroutines -type f -iname '*positive*' -maxdepth 1 -print | sort
+
+          echo '=== POSITIVE CALLERS ==='
+          grep -RInE 'ReadPositive[A-Za-z0-9_]*|read_positive_[a-z0-9_]+' crates/cairo-air/src/components --include='*.rs' \
+            | grep -v '/subroutines/read_positive_' \
+            | head -n 300 || true
+
+          echo '=== SECURITY / TERMINAL ASSUMPTIONS ==='
+          grep -RIniE 'security check|secure_run|last instance|last.*n|batch_size|already verified|already checked|terminal|termination' \
+            crates/cairo-air crates/adapter crates/prover crates/cairo-program-runner-lib --include='*.rs' \
+            | head -n 300 || true
+
+          echo '=== TRANSITION FILES ==='
+          grep -RIlE 'enabler|is_first|is_last|next_[A-Za-z0-9_]*|prev_[A-Za-z0-9_]*' crates/cairo-air/src/components --include='*.rs' \
+            | sort | head -n 200 || true
