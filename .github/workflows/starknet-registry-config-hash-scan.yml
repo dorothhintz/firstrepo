@@ -1,0 +1,48 @@
+name: Starknet registry config-hash scan
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Checkout exact proving commit
+        uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/proving
+          ref: 9f1aa0ec0079447df64590e28235947f547e4310
+          path: proving
+          fetch-depth: 1
+
+      - name: Verify exact target and install nightly
+        working-directory: proving
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "9f1aa0ec0079447df64590e28235947f547e4310"
+          rustup toolchain install nightly-2026-01-15 --profile minimal
+          rustup component add rust-src --toolchain nightly-2026-01-15
+          rustc +nightly-2026-01-15 --version
+
+      - name: Inject differential scan
+        run: |
+          set -euxo pipefail
+          cp starknet-registry-config-hash-scan/config_hash_scan.rs \
+            proving/crates/circuit_params/tests/config_hash_scan.rs
+
+      - name: Compare production and weaker Cairo verifier circuits
+        working-directory: proving
+        env:
+          RUST_MIN_STACK: 67108864
+          RUST_BACKTRACE: 1
+        run: |
+          set -euxo pipefail
+          cargo +nightly-2026-01-15 test -p circuit-params \
+            --test config_hash_scan \
+            scan_weaker_inner_cairo_configs_for_identical_leaf_topology \
+            -- --exact --nocapture
