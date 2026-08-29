@@ -20,11 +20,11 @@ jobs:
         run: |
           set -euo pipefail
           echo '=== READ_POSITIVE CALL SITES ==='
-          rg -n 'ReadPositive[A-Za-z0-9_]*::evaluate' crates/cairo-air/src/components || true
+          grep -RInE 'ReadPositive[A-Za-z0-9_]*::evaluate' crates/cairo-air/src/components || true
           echo '=== SECURITY / TERMINAL ASSUMPTIONS ==='
-          rg -n -i 'security check|secure_run|last instance|last.*n|batch_size|assum(e|ing)|already verified|already checked' crates/cairo-air crates/adapter crates/prover crates/cairo-program-runner-lib || true
+          grep -RIniE 'security check|secure_run|last instance|last.*n|batch_size|assum(e|ing)|already verified|already checked' crates/cairo-air crates/adapter crates/prover crates/cairo-program-runner-lib || true
           echo '=== ROW-TRANSITION / ENABLER CANDIDATES ==='
-          rg -n 'enabler|is_first|is_last|next_[A-Za-z0-9_]*|prev_[A-Za-z0-9_]*' crates/cairo-air/src/components --glob '*.rs' | head -n 1500 || true
+          grep -RInE 'enabler|is_first|is_last|next_[A-Za-z0-9_]*|prev_[A-Za-z0-9_]*' crates/cairo-air/src/components --include='*.rs' | head -n 1500 || true
 
   scan:
     runs-on: ubuntu-24.04
