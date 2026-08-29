@@ -1,0 +1,75 @@
+name: Starknet Mod zero-p PoC
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  poc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Checkout exact proving commit
+        uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/proving
+          ref: 9f1aa0ec0079447df64590e28235947f547e4310
+          path: proving
+          fetch-depth: 1
+
+      - name: Verify exact target
+        working-directory: proving
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "9f1aa0ec0079447df64590e28235947f547e4310"
+          cat rust-toolchain.toml
+
+      - name: Set up Python for Cairo 0 compiler
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Cairo 0 compiler
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install 'cairo-lang==0.13.5'
+          cairo-compile --version || true
+
+      - name: Compile malicious Cairo program
+        run: |
+          set -euxo pipefail
+          mkdir -p proving/test_data/mod_zero_p
+          cairo-compile starknet-mod-zero-p-poc/mod_zero_p.cairo \
+            --output proving/test_data/mod_zero_p/compiled.json \
+            --proof_mode
+          test -s proving/test_data/mod_zero_p/compiled.json
+
+      - name: Install exact Rust nightly
+        run: |
+          set -euxo pipefail
+          rustup toolchain install nightly-2026-01-15 --profile minimal
+          rustup component add rust-src --toolchain nightly-2026-01-15
+          rustc +nightly-2026-01-15 --version
+          cargo +nightly-2026-01-15 --version
+
+      - name: Inject PoC integration test
+        run: |
+          set -euxo pipefail
+          cp starknet-mod-zero-p-poc/mod_zero_p_poc.rs \
+            proving/crates/prover/tests/mod_zero_p_poc.rs
+
+      - name: Execute full STARK vs secure VM PoC
+        working-directory: proving
+        env:
+          RUST_MIN_STACK: 67108864
+          RUST_BACKTRACE: 1
+        run: |
+          set -euxo pipefail
+          cargo +nightly-2026-01-15 test -p stwo-cairo-prover \
+            --test mod_zero_p_poc \
+            poc_add_mod_zero_modulus_is_accepted_by_air \
+            -- --exact --nocapture
