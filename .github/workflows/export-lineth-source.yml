@@ -1,0 +1,192 @@
+name: export-lineth-source
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout helper repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Go 1.25.7
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.7'
+          check-latest: true
+
+      - name: Checkout exact Lineth snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: LFDT-Lineth/lineth-monorepo
+          ref: b660c569ef2f6756b14d548382777a41b4df382c
+          path: lineth-main
+          fetch-depth: 1
+
+      - name: Install exact go-corset
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOBIN="$GITHUB_WORKSPACE/tools" go install github.com/consensys/go-corset/cmd/go-corset@v1.2.10
+          "$GITHUB_WORKSPACE/tools/go-corset" --version
+
+      - name: Install deterministic malicious trace PoC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd lineth-main
+          python3 "$GITHUB_WORKSPACE/poc/apply_trace_patches.py"
+          mkdir -p tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation
+          mkdir -p tracer/arithmetization/src/test/java/net/consensys/linea/testing
+          cp "$GITHUB_WORKSPACE/poc/Keccak256Operation.java" \
+            tracer/arithmetization/src/test/java/org/hyperledger/besu/evm/operation/Keccak256Operation.java
+          cp "$GITHUB_WORKSPACE/poc/HashAuthorizationVaultBesuTest.java" \
+            tracer/arithmetization/src/test/java/net/consensys/linea/testing/HashAuthorizationVaultBesuTest.java
+
+      - name: Generate AIR-valid malicious request
+        shell: bash
+        env:
+          ZKEVM_FORK: OSAKA
+          PRESERVE_TRACE_FILES: '1'
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/tools:$(go env GOPATH)/bin:$PATH"
+          mkdir -p "$GITHUB_WORKSPACE/poc-output" "$GITHUB_WORKSPACE/poc-plugins"
+          cd lineth-main
+          ./gradlew :tracer:arithmetization:test \
+            --tests net.consensys.linea.testing.HashAuthorizationVaultBesuTest \
+            -Dbesu.traces.dir="$GITHUB_WORKSPACE/poc-output" \
+            -Dbesu.plugins.dir="$GITHUB_WORKSPACE/poc-plugins" \
+            --no-daemon --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gate-full-trace.log"
+          find "$GITHUB_WORKSPACE/poc-output" -maxdepth 5 -type f -print -exec sha256sum {} \;
+          test "$(find "$GITHUB_WORKSPACE/poc-output" -name '*.lt.gz' | wc -l)" -ge 1
+          test "$(find "$GITHUB_WORKSPACE/poc-output" -name '*getZkProof.json' | wc -l)" -ge 1
+          TEST_XML=tracer/arithmetization/build/test-results/test/TEST-net.consensys.linea.testing.HashAuthorizationVaultBesuTest.xml
+          grep -q 'NONPREFIX_EVM_SUBSTITUTION' "$TEST_XML"
+          grep -q 'NONPREFIX_HUB_SUBSTITUTION' "$TEST_XML"
+          grep -q 'failures="0"' "$TEST_XML"
+
+      - name: Install production Go witness PoC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd lineth-main
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_full_poc.go" prover/zkevm/prover/hash/packing/nonprefix_full_poc.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_hook.go" prover/zkevm/prover/hash/keccak/glue/nonprefix_hook.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_hook_default.go" prover/zkevm/prover/hash/keccak/glue/nonprefix_hook_default.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_poc_test.go" prover/zkevm/prover/hash/keccak/glue/nonprefix_poc_test.go
+          cp "$GITHUB_WORKSPACE/poc/nonprefix_full_test.go" prover/backend/execution/nonprefix_full_test.go
+          python3 "$GITHUB_WORKSPACE/poc/apply_go_patches.py"
+          cd prover
+          gofmt -w \
+            zkevm/prover/hash/packing/nonprefix_full_poc.go \
+            zkevm/prover/hash/keccak/glue/nonprefix_hook.go \
+            zkevm/prover/hash/keccak/glue/nonprefix_hook_default.go \
+            zkevm/prover/hash/keccak/glue/nonprefix_poc_test.go \
+            zkevm/prover/hash/keccak/glue/keccak_single_provider.go \
+            backend/execution/nonprefix_full_test.go
+
+      - name: Verify isolated production Packing and Keccak proof
+        shell: bash
+        env:
+          EXPECT_MALICIOUS_PASS: '1'
+          GOMAXPROCS: '4'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc \
+            ./zkevm/prover/hash/keccak/glue \
+            -run '^TestKeccakAcceptsNonPrefixPackingSubstitution$' \
+            -count=1 -timeout=60m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-isolated-proof.log"
+          grep -q 'full packing/Keccak proof verification error: <nil>' "$GITHUB_WORKSPACE/gate-isolated-proof.log"
+
+      - name: Validate backend request and witness
+        shell: bash
+        env:
+          NONPREFIX_POC_DIR: ${{ github.workspace }}/poc-output
+          GOMAXPROCS: '4'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc ./backend/execution \
+            -run '^TestNonPrefixRequestParse$' \
+            -count=1 -timeout=60m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-backend-witness.log"
+          grep -q 'NONPREFIX_FINAL_ROOT=' "$GITHUB_WORKSPACE/gate-backend-witness.log"
+          grep -q 'NONPREFIX_PUBLIC_INPUT=' "$GITHUB_WORKSPACE/gate-backend-witness.log"
+
+      - name: Add temporary proof swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          free -h
+          df -h /
+          AVAILABLE_KB=$(df -Pk / | awk 'NR==2 {print $4}')
+          SWAP_GB=20
+          if [ "$AVAILABLE_KB" -lt 26000000 ]; then SWAP_GB=12; fi
+          sudo fallocate -l "${SWAP_GB}G" /swapfile-nonprefix
+          sudo chmod 600 /swapfile-nonprefix
+          sudo mkswap /swapfile-nonprefix
+          sudo swapon /swapfile-nonprefix
+          swapon --show
+          free -h
+
+      - name: Prove and verify production check-only execution proof
+        shell: bash
+        env:
+          NONPREFIX_POC_DIR: ${{ github.workspace }}/poc-output
+          GOMAXPROCS: '4'
+          GOMEMLIMIT: 6GiB
+          GOGC: '20'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc ./backend/execution \
+            -run '^TestNonPrefixFullZkEVMCheckOnly$' \
+            -count=1 -timeout=180m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-checkonly-proof.log"
+          grep -q 'NONPREFIX_CHECKONLY_VERIFY=PASS' "$GITHUB_WORKSPACE/gate-checkonly-proof.log"
+          grep -q 'Public input consistency check passed' "$GITHUB_WORKSPACE/gate-checkonly-proof.log"
+
+      - name: Prove and verify production recursive execution proof
+        shell: bash
+        env:
+          NONPREFIX_POC_DIR: ${{ github.workspace }}/poc-output
+          GOMAXPROCS: '4'
+          GOMEMLIMIT: 6GiB
+          GOGC: '20'
+        run: |
+          set -euo pipefail
+          cd lineth-main/prover
+          go test -tags nonprefixpoc ./backend/execution \
+            -run '^TestNonPrefixFullZkEVMRecursion$' \
+            -count=1 -timeout=300m -v 2>&1 | tee "$GITHUB_WORKSPACE/gate-recursion-proof.log"
+          grep -q 'NONPREFIX_RECURSION_VERIFY=PASS' "$GITHUB_WORKSPACE/gate-recursion-proof.log"
+          grep -q 'Public input consistency check passed' "$GITHUB_WORKSPACE/gate-recursion-proof.log"
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nonprefix-full-proof-evidence
+          path: |
+            poc-output/**
+            gate-full-trace.log
+            gate-isolated-proof.log
+            gate-backend-witness.log
+            gate-checkonly-proof.log
+            gate-recursion-proof.log
+            lineth-main/tracer/arithmetization/build/test-results/test/**
+            lineth-main/tracer/arithmetization/build/reports/tests/test/**
+          retention-days: 1
+          if-no-files-found: warn
